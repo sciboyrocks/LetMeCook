@@ -1,0 +1,81 @@
+FROM codercom/code-server:latest
+
+USER root
+
+# Install common dev tools (without Docker CLI — installed below via official repo)
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    wget \
+    build-essential \
+    python3 \
+    python3-pip \
+    gnupg \
+    ca-certificates \
+    lsb-release \
+    unzip \
+    file \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CE CLI + Compose plugin from official Docker apt repo
+RUN curl -fsSL https://download.docker.com/linux/debian/gpg \
+      | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
+      https://download.docker.com/linux/debian $(lsb_release -cs) stable" \
+      > /etc/apt/sources.list.d/docker.list \
+    && apt-get update && apt-get install -y \
+      docker-ce-cli \
+      docker-compose-plugin \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 22
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install cloudflared
+RUN curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb \
+    && dpkg -i cloudflared.deb \
+    && rm cloudflared.deb
+
+# Create projects dir and Homebrew prefix
+RUN mkdir -p /projects && chown coder:coder /projects \
+    && mkdir -p /home/linuxbrew/.linuxbrew && chown -R coder:coder /home/linuxbrew
+
+# Build and install the LetMeCook VS Code extension
+COPY letmecook-extension/ /tmp/letmecook-extension/
+RUN cd /tmp/letmecook-extension \
+    && npm install --ignore-scripts \
+    && node esbuild.js \
+    && npx --yes @vscode/vsce package --no-dependencies --allow-missing-repository --skip-license -o /tmp/letmecook.vsix \
+    && rm -rf /tmp/letmecook-extension \
+    && chown coder:coder /tmp/letmecook.vsix
+
+USER coder
+
+# Install the LetMeCook extension manually (code-server --install-extension marks it .obsolete during build)
+RUN EXT_DIR="/home/coder/.local/share/code-server/extensions/letmecook.letmecook-extension-0.1.0" \
+    && mkdir -p "$EXT_DIR" \
+    && cd /tmp && unzip -o /tmp/letmecook.vsix "extension/**" -d /tmp/lmc-unpack \
+    && cp -r /tmp/lmc-unpack/extension/* "$EXT_DIR/" \
+    && cp /tmp/lmc-unpack/extension/.vsixmanifest "$EXT_DIR/.vsixmanifest" 2>/dev/null || true \
+    && echo '[{"identifier":{"id":"letmecook.letmecook-extension"},"version":"0.1.0","location":{"scheme":"file","path":"'"$EXT_DIR"'"},"relativeLocation":"letmecook.letmecook-extension-0.1.0","metadata":{"installedTimestamp":1700000000000}}]' \
+       > /home/coder/.local/share/code-server/extensions/extensions.json \
+    && rm -rf /tmp/letmecook.vsix /tmp/lmc-unpack
+
+# Install Homebrew
+RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+    && echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/coder/.bashrc \
+    && echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/coder/.profile
+
+ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
+
+EXPOSE 8080

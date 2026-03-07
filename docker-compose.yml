@@ -1,0 +1,121 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: letmecook-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    networks:
+      - letmecook
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  code-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.code-server
+    container_name: letmecook-code-server
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ${PROJECTS_DIR:-./projects}:/projects
+      - /var/run/docker.sock:/var/run/docker.sock
+      - code-server-data:/home/coder/.local/share/code-server
+      - code-server-extensions:/home/coder/.local/share/code-server/extensions
+      - ./code-server-config.yaml:/home/coder/.config/code-server/config.yaml:ro
+      - ./code-server-settings.json:/home/coder/.local/share/code-server/User/settings.json
+    environment:
+      - DOCKER_USER=coder
+      - EXTENSIONS_GALLERY={"serviceUrl":"https://marketplace.visualstudio.com/_apis/public/gallery","itemUrl":"https://marketplace.visualstudio.com/items","cacheUrl":"https://vscode.blob.core.windows.net/gallery/index"}
+      - LETMECOOK_URL=http://localhost:3000
+      - LETMECOOK_DASHBOARD_URL=${LETMECOOK_DASHBOARD_URL:-http://localhost:3001}
+      - LETMECOOK_API_KEY=${API_KEY:-}
+    user: "0:0"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        chown -R coder:coder /projects
+        chown -R coder:coder /home/coder/.local/share/code-server
+        if [ -S /var/run/docker.sock ]; then
+          DOCKER_GID=$$(stat -c '%g' /var/run/docker.sock)
+          if ! getent group "$${DOCKER_GID}" >/dev/null; then
+            groupadd -g "$${DOCKER_GID}" dockerhost
+          fi
+          usermod -aG "$${DOCKER_GID}" coder
+        fi
+        exec su -s /bin/bash coder -c '/usr/bin/entrypoint.sh --bind-addr 0.0.0.0:8080 --auth none --disable-telemetry'
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: letmecook-api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - api-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - SESSION_SECRET=${SESSION_SECRET}
+      - REDIS_URL=redis://redis:6379
+      - CODE_SERVER_HOST=code-server
+      - CODE_SERVER_PORT=8080
+      - API_KEY=${API_KEY:-}
+      - DOMAIN=${DOMAIN:-localhost}
+      - GDRIVE_CREDENTIALS_PATH=${GDRIVE_CREDENTIALS_PATH:-}
+      - GDRIVE_FOLDER_ID=${GDRIVE_FOLDER_ID:-}
+      - GDRIVE_OAUTH_CLIENT_ID=${GDRIVE_OAUTH_CLIENT_ID:-}
+      - GDRIVE_OAUTH_CLIENT_SECRET=${GDRIVE_OAUTH_CLIENT_SECRET:-}
+      - GDRIVE_OAUTH_REFRESH_TOKEN=${GDRIVE_OAUTH_REFRESH_TOKEN:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    networks:
+      - letmecook
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)throw 1}).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: letmecook-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - NEXT_PUBLIC_API_URL=http://api:3000
+    networks:
+      - letmecook
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  redis-data:
+  api-data:
+  code-server-data:
+  code-server-extensions:
+
+networks:
+  letmecook:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "1280"

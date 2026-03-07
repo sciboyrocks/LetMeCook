@@ -1,0 +1,21 @@
+# Cloudflare Tunnel Configuration
+# See: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
+#
+# To set up:
+#   1. cloudflared tunnel login
+#   2. cloudflared tunnel create letmecook
+#   3. Replace the values below with your tunnel ID, credentials path, and hostname
+#   4. cloudflared tunnel route dns letmecook yourdomain.com
+#   5. cloudflared tunnel --config cloudflared-config.yml run
+
+tunnel: YOUR_TUNNEL_ID
+credentials-file: /path/to/.cloudflared/YOUR_TUNNEL_ID.json
+
+ingress:
+  - hostname: yourdomain.com
+    service: http://localhost:3001
+    originRequest:
+      noTLSVerify: true
+      connectTimeout: 30s
+      httpHostHeader: yourdomain.com
+  - service: http_status:404

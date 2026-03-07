@@ -1,0 +1,145 @@
+{
+  "name": "letmecook-extension",
+  "displayName": "LetMeCook",
+  "description": "LetMeCook developer OS — dashboard, tasks, port exposure, and activity tracking inside VS Code.",
+  "version": "0.1.0",
+  "publisher": "letmecook",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "LetMeCook",
+      "properties": {
+        "letmecook.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "LetMeCook API server base URL (overridden by LETMECOOK_URL env var)"
+        },
+        "letmecook.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for authenticating with the LetMeCook server (overridden by LETMECOOK_API_KEY env var)"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "letmecook.openDashboard",
+        "title": "LetMeCook: Open Dashboard",
+        "icon": "$(home)"
+      },
+      {
+        "command": "letmecook.exposePort",
+        "title": "LetMeCook: Expose Port",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "letmecook.openTasks",
+        "title": "LetMeCook: Open Tasks",
+        "icon": "$(tasklist)"
+      },
+      {
+        "command": "letmecook.cloneRepo",
+        "title": "LetMeCook: Clone a Repo into New Project",
+        "icon": "$(repo-clone)"
+      },
+      {
+        "command": "letmecook.commitPush",
+        "title": "LetMeCook: Commit & Push Everything",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "letmecook.refreshTasks",
+        "title": "LetMeCook: Refresh Tasks",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "letmecook.addTask",
+        "title": "LetMeCook: Add Task",
+        "icon": "$(add)"
+      },
+      {
+        "command": "letmecook.completeTask",
+        "title": "Complete Task",
+        "icon": "$(check)"
+      },
+      {
+        "command": "letmecook.askAI",
+        "title": "LetMeCook: Ask AI About This Project",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "letmecook.generateTasksFromSelection",
+        "title": "LetMeCook: Generate Tasks from Selection",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "letmecook.explainError",
+        "title": "LetMeCook: Explain Current Error",
+        "icon": "$(bug)"
+      },
+      {
+        "command": "letmecook.generateCommitMessage",
+        "title": "LetMeCook: Generate AI Commit Message",
+        "icon": "$(git-commit)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "letmecook",
+          "title": "LetMeCook",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "letmecook": [
+        {
+          "id": "letmecookPanel",
+          "name": "LetMeCook",
+          "type": "tree",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "letmecook.refreshTasks",
+          "when": "view == letmecookPanel",
+          "group": "navigation@2"
+        },
+        {
+          "command": "letmecook.addTask",
+          "when": "view == letmecookPanel",
+          "group": "navigation@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "letmecook.completeTask",
+          "when": "view == letmecookPanel && viewItem == task",
+          "group": "inline"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "npm run build && npx @vscode/vsce package --no-dependencies --allow-missing-repository --skip-license"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.0.0"
+  }
+}
