@@ -45,13 +45,12 @@ export function getProviderById(id: string): AIProvider | undefined {
 // ─── Active provider ──────────────────────────────────────────────────────────
 
 const SETTINGS_KEY = 'ai_provider';
-const DEFAULT_PROVIDER_ID = 'gemini-cli';
 
-export function getActiveProviderId(): string {
+export function getActiveProviderId(): string | null {
   const row = db
     .prepare<[string], { value: string }>('SELECT value FROM settings WHERE key = ?')
     .get(SETTINGS_KEY);
-  return row?.value || DEFAULT_PROVIDER_ID;
+  return row?.value || null;
 }
 
 export function setActiveProvider(id: string): void {
@@ -63,14 +62,60 @@ export function setActiveProvider(id: string): void {
 
 export function getActiveProvider(): AIProvider {
   const id = getActiveProviderId();
+  if (!id) {
+    throw new Error('No AI provider selected. Please choose a provider from the Connections page.');
+  }
   const provider = getProviderById(id);
   if (!provider) {
-    // Fallback to first available
-    const fallback = getAllProviders()[0];
-    if (!fallback) throw new Error('No AI providers registered');
-    return fallback;
+    throw new Error(`Unknown provider ID: '${id}'`);
   }
   return provider;
+}
+
+// ─── API Key management ──────────────────────────────────────────────────────
+
+const API_KEY_PREFIX = 'ai_key_';
+
+/** Get the API key for a provider: DB first, then env var fallback. */
+export function getProviderApiKey(providerId: string): string {
+  const row = db
+    .prepare<[string], { value: string }>('SELECT value FROM settings WHERE key = ?')
+    .get(`${API_KEY_PREFIX}${providerId}`);
+  if (row?.value) return row.value;
+
+  // Env var fallback
+  const envMap: Record<string, string | undefined> = {
+    'gemini-api': process.env.GEMINI_API_KEY,
+    'openai': process.env.OPENAI_API_KEY,
+    'anthropic': process.env.ANTHROPIC_API_KEY,
+  };
+  return envMap[providerId] ?? '';
+}
+
+/** Set (or overwrite) the API key for a provider in the DB. */
+export function setProviderApiKey(providerId: string, apiKey: string): void {
+  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+    `${API_KEY_PREFIX}${providerId}`,
+    apiKey,
+  );
+}
+
+/** Remove the stored API key for a provider from the DB. */
+export function clearProviderApiKey(providerId: string): void {
+  db.prepare('DELETE FROM settings WHERE key = ?').run(`${API_KEY_PREFIX}${providerId}`);
+}
+
+/** Check if a provider has an API key set (either DB or env). */
+export function hasProviderApiKey(providerId: string): boolean {
+  return getProviderApiKey(providerId).length > 0;
+}
+
+/** Return a masked version of the key for display (first 4 + last 4 chars). */
+export function getMaskedApiKey(providerId: string): string | null {
+  const key = getProviderApiKey(providerId);
+  if (!key) return null;
+  if (key.length <= 8) return '••••••••';
+  return `${key.slice(0, 4)}${'•'.repeat(Math.min(key.length - 8, 20))}${key.slice(-4)}`;
 }
 
 // ─── Info helpers ─────────────────────────────────────────────────────────────

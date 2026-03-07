@@ -26,6 +26,11 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl
     apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y gh && \
     rm -rf /var/lib/apt/lists/*
 
+# Install Gemini CLI and create default settings
+RUN npm install -g @google/gemini-cli && \
+    mkdir -p /root/.gemini && \
+    echo '{"security":{"auth":{"selectedType":"oauth-personal"}},"hasSeenIdeIntegrationNudge":true,"general":{"sessionRetention":{"enabled":true,"maxAge":"30d","warningAcknowledged":true}},"ide":{"hasSeenNudge":true}}' > /root/.gemini/settings.json
+
 WORKDIR /app
 
 COPY pnpm-workspace.yaml .npmrc package.json pnpm-lock.yaml ./
@@ -40,6 +45,9 @@ COPY --from=builder /app/apps/api/dist ./apps/api/dist
 # Copy SQL migration files (not emitted by tsc)
 COPY apps/api/src/db/migrations ./apps/api/dist/db/migrations
 
+# Copy logo for code-server favicon
+COPY apps/web/public/logo.png ./apps/api/dist/logo.png
+
 RUN mkdir -p /app/data /app/data/projects
 
 EXPOSE 3000
@@ -47,4 +55,4 @@ EXPOSE 3000
 ENV NODE_ENV=production
 
 WORKDIR /app/apps/api
-CMD ["node", "dist/index.js"]
+CMD ["sh", "-c", "node dist/worker.js & node dist/index.js"]

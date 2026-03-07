@@ -48,6 +48,10 @@ const nextConfig: NextConfig = {
         source: "/out/:path*",
         destination: `${API_URL}/out/:path*`,
       },
+      {
+        source: "/favicon.ico",
+        destination: `${API_URL}/favicon.ico`,
+      },
     ];
   },
 };

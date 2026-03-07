@@ -667,3 +667,37 @@ export const aiCommitMessage = (projectSlug?: string, diff?: string) =>
     method: "POST",
     body: JSON.stringify({ projectSlug, diff }),
   });
+
+// ── Gemini CLI management ───────────────────────────────────────────────────
+export interface GeminiCliStatus {
+  installed: boolean;
+  version: string | null;
+  authenticated: boolean;
+}
+export const getGeminiCliStatus = () =>
+  request<GeminiCliStatus>("/ai/gemini-cli/status");
+export const getGeminiCliAuthUrl = () =>
+  request<{ url: string | null; rawOutput: string }>("/ai/gemini-cli/auth-url", { method: "POST" });
+export const submitGeminiCliAuthCode = (code: string) =>
+  request<{ success: boolean; rawOutput: string }>("/ai/gemini-cli/auth-code", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+
+// ── API Key management ──────────────────────────────────────────────────────
+export interface ApiKeyStatus {
+  providerId: string;
+  hasKey: boolean;
+  maskedKey: string | null;
+}
+export const getApiKeyStatus = (providerId: string) =>
+  request<ApiKeyStatus>(`/ai/api-keys/${encodeURIComponent(providerId)}`);
+export const setApiKey = (providerId: string, apiKey: string) =>
+  request<{ providerId: string; maskedKey: string }>(`/ai/api-keys/${encodeURIComponent(providerId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ apiKey }),
+  });
+export const clearApiKey = (providerId: string) =>
+  request<{ providerId: string; hasKey: boolean }>(`/ai/api-keys/${encodeURIComponent(providerId)}`, {
+    method: "DELETE",
+  });

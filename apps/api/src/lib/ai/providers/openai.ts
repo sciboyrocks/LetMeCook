@@ -7,13 +7,14 @@
  *   OPENAI_BASE_URL     — for compatible endpoints (e.g. Azure OpenAI, Ollama)
  */
 import type { AIProvider, AICompleteOptions, AIAvailability } from './base.js';
+import { getProviderApiKey } from '../provider-registry.js';
 
 export class OpenAIProvider implements AIProvider {
   readonly id = 'openai';
   readonly name = 'OpenAI';
   readonly type = 'api' as const;
 
-  private get apiKey() { return process.env.OPENAI_API_KEY ?? ''; }
+  private get apiKey() { return getProviderApiKey('openai'); }
   private get model() { return process.env.OPENAI_MODEL ?? 'gpt-4o-mini'; }
   private get baseUrl() { return (process.env.OPENAI_BASE_URL ?? 'https://api.openai.com').replace(/\/$/, ''); }
 

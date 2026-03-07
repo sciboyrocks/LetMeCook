@@ -6,6 +6,7 @@
  *   GEMINI_MODEL   — defaults to 'gemini-2.0-flash'
  */
 import type { AIProvider, AICompleteOptions, AIAvailability } from './base.js';
+import { getProviderApiKey } from '../provider-registry.js';
 
 const DEFAULT_MODEL = 'gemini-2.0-flash';
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
@@ -15,7 +16,7 @@ export class GeminiApiProvider implements AIProvider {
   readonly name = 'Gemini (API Key)';
   readonly type = 'api' as const;
 
-  private get apiKey() { return process.env.GEMINI_API_KEY ?? ''; }
+  private get apiKey() { return getProviderApiKey('gemini-api'); }
   private get model() { return process.env.GEMINI_MODEL ?? DEFAULT_MODEL; }
 
   async complete(opts: AICompleteOptions): Promise<string> {

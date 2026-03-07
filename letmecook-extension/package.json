@@ -127,6 +127,25 @@
           "when": "view == letmecookPanel && viewItem == task",
           "group": "inline"
         }
+      ],
+      "editor/context": [
+        {
+          "command": "letmecook.askAI",
+          "group": "letmecook@1"
+        },
+        {
+          "command": "letmecook.generateTasksFromSelection",
+          "when": "editorHasSelection",
+          "group": "letmecook@2"
+        },
+        {
+          "command": "letmecook.explainError",
+          "group": "letmecook@3"
+        },
+        {
+          "command": "letmecook.generateCommitMessage",
+          "group": "letmecook@4"
+        }
       ]
     }
   },

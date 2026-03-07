@@ -6,6 +6,7 @@
  *   ANTHROPIC_MODEL   — defaults to 'claude-3-5-haiku-20241022'
  */
 import type { AIProvider, AICompleteOptions, AIAvailability } from './base.js';
+import { getProviderApiKey } from '../provider-registry.js';
 
 const DEFAULT_MODEL = 'claude-3-5-haiku-20241022';
 const ANTHROPIC_API = 'https://api.anthropic.com';
@@ -16,7 +17,7 @@ export class AnthropicProvider implements AIProvider {
   readonly name = 'Anthropic (Claude)';
   readonly type = 'api' as const;
 
-  private get apiKey() { return process.env.ANTHROPIC_API_KEY ?? ''; }
+  private get apiKey() { return getProviderApiKey('anthropic'); }
   private get model() { return process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL; }
 
   async complete(opts: AICompleteOptions): Promise<string> {

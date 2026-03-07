@@ -16,8 +16,12 @@
  *   POST /api/ai/bootstrap              — PRD → scaffold plan (8.8)
  *   POST /api/ai/projects/:slug/recap   — session recap → journal draft (8.9)
  */
-import { execSync } from 'node:child_process';
+import { execSync, spawn, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+
+// Module-level ref to the pending gemini auth process so we can feed it the auth code later
+let pendingAuthProcess: ChildProcess | null = null;
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db/index.js';
@@ -29,6 +33,10 @@ import {
   getActiveProviderId,
   setActiveProvider,
   getProviderById,
+  getMaskedApiKey,
+  setProviderApiKey,
+  clearProviderApiKey,
+  hasProviderApiKey,
 } from '../lib/ai/provider-registry.js';
 import { aiRun, getAIUsageStats, AIRateLimitError } from '../lib/ai/adapter.js';
 import { buildProjectContext } from '../lib/ai/context.js';
@@ -475,6 +483,206 @@ Output only valid JSON. No markdown code fences.`,
       audit(req, 'ai_agent.start', 'project', project.id, project.slug);
 
       return reply.send({ ok: true, data: { jobId: job.id, status: job.status, timeoutMs: job.timeoutMs } });
+    }
+  );
+
+  // ── Gemini CLI management ─────────────────────────────────────────────────
+
+  // GET /api/ai/gemini-cli/status — check if gemini CLI is installed & authenticated
+  fastify.get(
+    '/api/ai/gemini-cli/status',
+    { preHandler: [fastify.requireAuth as typeof requireAuth] },
+    async (_req, reply) => {
+      let installed = false;
+      let version: string | null = null;
+      let authenticated = false;
+
+      try {
+        const out = execSync('gemini --version', { encoding: 'utf-8', timeout: 5_000 }).trim();
+        installed = true;
+        version = out.split('\n')[0] ?? out;
+        authenticated = existsSync('/root/.gemini/oauth_creds.json');
+      } catch {
+        installed = false;
+      }
+
+      return reply.send({ ok: true, data: { installed, version, authenticated } });
+    }
+  );
+
+  // POST /api/ai/gemini-cli/auth-start — spawn interactive auth, return the URL
+  fastify.post(
+    '/api/ai/gemini-cli/auth-url',
+    { preHandler: [fastify.requireAuth as typeof requireAuth] },
+    async (_req, reply) => {
+      // Kill any leftover auth process
+      if (pendingAuthProcess) {
+        pendingAuthProcess.kill('SIGTERM');
+        pendingAuthProcess = null;
+      }
+
+      return new Promise<void>((resolve) => {
+        const child = spawn('gemini', ['-p', 'ping'], {
+          env: { ...process.env, NO_BROWSER: 'true', BROWSER: 'none' },
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+
+        let output = '';
+        let urlSent = false;
+
+        const onData = (chunk: Buffer) => {
+          output += chunk.toString();
+          if (urlSent) return;
+          const urlMatch = output.match(/https?:\/\/[^\s]+/);
+          if (urlMatch) {
+            urlSent = true;
+            pendingAuthProcess = child;
+            reply.send({ ok: true, data: { url: urlMatch[0], rawOutput: output.trim() } });
+            resolve();
+          }
+        };
+
+        child.stdout?.on('data', onData);
+        child.stderr?.on('data', onData);
+
+        // Timeout — if no URL appears within 15s, give up
+        const timer = setTimeout(() => {
+          if (!urlSent) {
+            urlSent = true;
+            child.kill('SIGTERM');
+            pendingAuthProcess = null;
+            reply.send({ ok: true, data: { url: null, rawOutput: output.trim() || 'Timed out waiting for auth URL' } });
+            resolve();
+          }
+        }, 15_000);
+
+        child.on('close', () => {
+          clearTimeout(timer);
+          if (!urlSent) {
+            urlSent = true;
+            pendingAuthProcess = null;
+            reply.send({ ok: true, data: { url: null, rawOutput: output.trim() || 'Process exited without producing a URL' } });
+            resolve();
+          }
+          // If URL was sent, the process closing means auth completed or was aborted
+          pendingAuthProcess = null;
+        });
+
+        child.on('error', (err) => {
+          clearTimeout(timer);
+          if (!urlSent) {
+            urlSent = true;
+            pendingAuthProcess = null;
+            reply.status(500).send({ ok: false, error: { code: 'AUTH_FAILED', message: err.message } });
+            resolve();
+          }
+        });
+      });
+    }
+  );
+
+  // POST /api/ai/gemini-cli/auth-code — feed the authorization code to the waiting process
+  fastify.post<{ Body: { code?: string } }>(
+    '/api/ai/gemini-cli/auth-code',
+    { preHandler: [fastify.requireAuth as typeof requireAuth] },
+    async (req, reply) => {
+      const { code } = req.body ?? {};
+      if (!code || typeof code !== 'string' || !code.trim()) {
+        return reply.status(400).send({ ok: false, error: { code: 'INVALID_BODY', message: 'Authorization code is required' } });
+      }
+
+      if (!pendingAuthProcess || !pendingAuthProcess.stdin || pendingAuthProcess.killed) {
+        return reply.status(409).send({
+          ok: false,
+          error: { code: 'NO_PENDING_AUTH', message: 'No pending auth session. Start auth first via POST /api/ai/gemini-cli/auth-url' },
+        });
+      }
+
+      return new Promise<void>((resolve) => {
+        let output = '';
+        const child = pendingAuthProcess!;
+
+        const onData = (chunk: Buffer) => {
+          output += chunk.toString();
+        };
+        child.stdout?.on('data', onData);
+        child.stderr?.on('data', onData);
+
+        child.on('close', (exitCode) => {
+          pendingAuthProcess = null;
+          const success = exitCode === 0 || output.toLowerCase().includes('success') || output.toLowerCase().includes('authenticated');
+          reply.send({ ok: true, data: { success, rawOutput: output.trim() } });
+          resolve();
+        });
+
+        // Write the auth code + newline to stdin
+        child.stdin!.write(code.trim() + '\n');
+        child.stdin!.end();
+
+        // Timeout: if process doesn't close within 30s, kill it
+        setTimeout(() => {
+          if (pendingAuthProcess === child) {
+            child.kill('SIGTERM');
+            pendingAuthProcess = null;
+            reply.send({ ok: true, data: { success: false, rawOutput: output.trim() || 'Auth process timed out' } });
+            resolve();
+          }
+        }, 30_000);
+      });
+    }
+  );
+
+  // ── API Key management ────────────────────────────────────────────────────────────
+
+  const ALLOWED_KEY_PROVIDERS = ['gemini-api', 'openai', 'anthropic'];
+
+  // GET /api/ai/api-keys/:providerId — get masked API key status
+  fastify.get<{ Params: { providerId: string } }>(
+    '/api/ai/api-keys/:providerId',
+    { preHandler: [fastify.requireAuth as typeof requireAuth] },
+    async (req, reply) => {
+      const { providerId } = req.params;
+      if (!ALLOWED_KEY_PROVIDERS.includes(providerId)) {
+        return reply.status(400).send({ ok: false, error: { code: 'INVALID_PROVIDER', message: `API keys are not applicable for provider: ${providerId}` } });
+      }
+      const masked = getMaskedApiKey(providerId);
+      return reply.send({ ok: true, data: { providerId, hasKey: !!masked, maskedKey: masked } });
+    }
+  );
+
+  // PUT /api/ai/api-keys/:providerId — set API key
+  fastify.put<{ Params: { providerId: string }; Body: { apiKey?: string } }>(
+    '/api/ai/api-keys/:providerId',
+    { preHandler: [fastify.requireAuth as typeof requireAuth] },
+    async (req, reply) => {
+      const { providerId } = req.params;
+      if (!ALLOWED_KEY_PROVIDERS.includes(providerId)) {
+        return reply.status(400).send({ ok: false, error: { code: 'INVALID_PROVIDER', message: `API keys are not applicable for provider: ${providerId}` } });
+      }
+      const { apiKey } = req.body ?? {};
+      if (!apiKey || typeof apiKey !== 'string' || !apiKey.trim()) {
+        return reply.status(400).send({ ok: false, error: { code: 'INVALID_BODY', message: 'apiKey is required' } });
+      }
+      setProviderApiKey(providerId, apiKey.trim());
+      audit(req, 'ai_api_key_set', 'provider', providerId);
+      return reply.send({ ok: true, data: { providerId, maskedKey: getMaskedApiKey(providerId) } });
+    }
+  );
+
+  // DELETE /api/ai/api-keys/:providerId — clear API key
+  fastify.delete<{ Params: { providerId: string } }>(
+    '/api/ai/api-keys/:providerId',
+    { preHandler: [fastify.requireAuth as typeof requireAuth] },
+    async (req, reply) => {
+      const { providerId } = req.params;
+      if (!ALLOWED_KEY_PROVIDERS.includes(providerId)) {
+        return reply.status(400).send({ ok: false, error: { code: 'INVALID_PROVIDER', message: `API keys are not applicable for provider: ${providerId}` } });
+      }
+      clearProviderApiKey(providerId);
+      audit(req, 'ai_api_key_cleared', 'provider', providerId);
+      // Check if env var fallback still provides a key
+      const stillHasKey = hasProviderApiKey(providerId);
+      return reply.send({ ok: true, data: { providerId, hasKey: stillHasKey } });
     }
   );
 

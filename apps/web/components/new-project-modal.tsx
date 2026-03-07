@@ -141,7 +141,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
     return () => window.clearTimeout(timer);
   }, [mode, repoUrl]);
 
-  const { data: githubBranchesData } = useQuery({
+  const { data: githubBranchesData, isFetching: branchesFetching } = useQuery({
     queryKey: ["github-branches", branchLookupUrl],
     queryFn: async () => {
       const res = await getGithubBranches(branchLookupUrl);
@@ -434,9 +434,11 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                       </div>
                     )}
                   </div>
-                  {!githubReposLoading && githubRepos.length === 0 && (
+                  {githubReposLoading ? (
+                    <p className="mt-1 text-[11px]" style={{ color: "var(--text-muted)" }}>Fetching repositories...</p>
+                  ) : githubRepos.length === 0 ? (
                     <p className="mt-1 text-[11px]" style={{ color: "var(--text-muted)" }}>No repositories found or GitHub is not connected.</p>
-                  )}
+                  ) : null}
                 </div>
 
                 <div>
@@ -478,7 +480,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                       style={{ borderColor: panelBorder, background: fieldBg }}
                     >
                       <option value="" className={isDarkTheme ? "bg-[#0e0e10] text-white" : "bg-white text-zinc-900"}>
-                        {availableBranches.length > 0 ? "Default branch" : "No branches detected"}
+                        {branchesFetching ? "Fetching branches..." : availableBranches.length > 0 ? "Default branch" : "No branches detected"}
                       </option>
                       {availableBranches.map((branchName) => (
                         <option key={branchName} value={branchName} className={isDarkTheme ? "bg-[#0e0e10] text-white" : "bg-white text-zinc-900"}>

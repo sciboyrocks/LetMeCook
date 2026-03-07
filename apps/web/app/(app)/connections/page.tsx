@@ -15,7 +15,14 @@ import {
   getAIUsage,
   getFlag,
   setFlag,
+  getGeminiCliStatus,
+  getGeminiCliAuthUrl,
+  submitGeminiCliAuthCode,
+  getApiKeyStatus,
+  setApiKey,
+  clearApiKey,
   type AIProviderInfo,
+  type ApiKeyStatus,
 } from "@/lib/api";
 import GithubDeviceLoginModal from "@/components/github-device-login-modal";
 
@@ -480,6 +487,10 @@ function GoogleDriveConnection() {
 function AIConnection() {
   const queryClient = useQueryClient();
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
+  const [expandedKeyProvider, setExpandedKeyProvider] = useState<string | null>(null);
+  const [geminiAuthUrl, setGeminiAuthUrl] = useState<string | null>(null);
+  const [geminiAuthCode, setGeminiAuthCode] = useState("");
 
   const { data: aiFlag, isLoading: isFlagLoading } = useQuery({
     queryKey: ["flag", "ai"],
@@ -518,6 +529,43 @@ function AIConnection() {
     },
   });
 
+  // Gemini CLI status
+  const { data: geminiStatus, isLoading: isGeminiLoading } = useQuery({
+    queryKey: ["gemini-cli-status"],
+    queryFn: async () => {
+      const res = await getGeminiCliStatus();
+      return res.ok ? res.data : null;
+    },
+  });
+
+  const authMutation = useMutation({
+    mutationFn: async () => {
+      const res = await getGeminiCliAuthUrl();
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+    onSuccess: (data) => {
+      if (data.url) {
+        setGeminiAuthUrl(data.url);
+        setGeminiAuthCode("");
+      }
+    },
+  });
+
+  const submitCodeMutation = useMutation({
+    mutationFn: async (code: string) => {
+      const res = await submitGeminiCliAuthCode(code);
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+    onSuccess: () => {
+      setGeminiAuthUrl(null);
+      setGeminiAuthCode("");
+      queryClient.invalidateQueries({ queryKey: ["gemini-cli-status"] });
+      queryClient.invalidateQueries({ queryKey: ["ai-providers"] });
+    },
+  });
+
   const switchMutation = useMutation({
     mutationFn: async (providerId: string) => {
       const res = await setAIProvider(providerId);
@@ -530,6 +578,51 @@ function AIConnection() {
     },
     onError: (err) =>
       setSwitchError(err instanceof Error ? err.message : "Failed to switch provider"),
+  });
+
+  // API key status for each API provider
+  const API_KEY_PROVIDERS = ["gemini-api", "openai", "anthropic"];
+
+  const keyStatusQueries = API_KEY_PROVIDERS.map((pid) => {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    return useQuery({
+      queryKey: ["api-key-status", pid],
+      queryFn: async () => {
+        const res = await getApiKeyStatus(pid);
+        return res.ok ? res.data : null;
+      },
+    });
+  });
+
+  const keyStatuses: Record<string, ApiKeyStatus | null> = {};
+  API_KEY_PROVIDERS.forEach((pid, i) => {
+    keyStatuses[pid] = keyStatusQueries[i]?.data ?? null;
+  });
+
+  const saveKeyMutation = useMutation({
+    mutationFn: async ({ providerId, apiKey }: { providerId: string; apiKey: string }) => {
+      const res = await setApiKey(providerId, apiKey);
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+    onSuccess: (_data, vars) => {
+      setKeyInputs((prev) => ({ ...prev, [vars.providerId]: "" }));
+      setExpandedKeyProvider(null);
+      queryClient.invalidateQueries({ queryKey: ["api-key-status", vars.providerId] });
+      queryClient.invalidateQueries({ queryKey: ["ai-providers"] });
+    },
+  });
+
+  const clearKeyMutation = useMutation({
+    mutationFn: async (providerId: string) => {
+      const res = await clearApiKey(providerId);
+      if (!res.ok) throw new Error(res.error.message);
+      return res.data;
+    },
+    onSuccess: (_data, providerId) => {
+      queryClient.invalidateQueries({ queryKey: ["api-key-status", providerId] });
+      queryClient.invalidateQueries({ queryKey: ["ai-providers"] });
+    },
   });
 
   const activeProvider = providers.find((p) => p.active);
@@ -595,15 +688,137 @@ function AIConnection() {
           )}
           {switchError && <p className="text-xs text-red-400">{switchError}</p>}
 
+          {/* Gemini CLI setup card */}
+          {aiFlag && (
+            <div
+              className="rounded-xl border px-3 py-3"
+              style={{ borderColor: "rgba(168,85,247,0.2)", background: "rgba(168,85,247,0.04)" }}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+                  Gemini CLI
+                </span>
+                {isGeminiLoading ? (
+                  <SkeletonBadge />
+                ) : geminiStatus?.installed ? (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                    style={{ background: "rgba(52,211,153,0.12)", color: "#34d399", border: "1px solid rgba(52,211,153,0.25)" }}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: "#34d399" }} />
+                    Installed {geminiStatus.version && `(${geminiStatus.version})`}
+                  </span>
+                ) : (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                    style={{ background: "rgba(248,113,113,0.12)", color: "#f87171", border: "1px solid rgba(248,113,113,0.25)" }}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: "#f87171" }} />
+                    Not installed
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] mb-2.5" style={{ color: "var(--text-muted)" }}>
+                Gemini CLI lets you use Google&apos;s Gemini models locally. Install it, then sign in with your Google account.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {!isGeminiLoading && geminiStatus?.installed && !geminiStatus?.authenticated && !geminiAuthUrl && (
+                  <button
+                    onClick={() => authMutation.mutate()}
+                    disabled={authMutation.isPending}
+                    className="rounded-lg px-3 py-1.5 text-[11px] font-medium transition-opacity hover:opacity-80 disabled:opacity-50"
+                    style={{ background: "#a855f7", color: "#fff" }}
+                  >
+                    {authMutation.isPending ? "Getting link…" : "Sign in to Gemini"}
+                  </button>
+                )}
+                {!isGeminiLoading && geminiStatus?.installed && geminiStatus?.authenticated && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[11px] font-medium"
+                    style={{ background: "rgba(52,211,153,0.1)", color: "#34d399" }}
+                  >
+                    ✓ Signed in &amp; ready
+                  </span>
+                )}
+              </div>
+
+              {/* Auth code flow */}
+              {geminiAuthUrl && (
+                <div className="mt-3 flex flex-col gap-2 rounded-lg border px-3 py-2.5" style={{ borderColor: "rgba(168,85,247,0.2)", background: "rgba(168,85,247,0.04)" }}>
+                  <p className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
+                    1. Click the link below to sign in with Google:
+                  </p>
+                  <a
+                    href={geminiAuthUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="break-all rounded-lg px-3 py-1.5 text-[11px] font-medium text-purple-400 underline hover:text-purple-300"
+                  >
+                    Open Google Sign-in →
+                  </a>
+                  <p className="text-[11px]" style={{ color: "var(--text-secondary)" }}>
+                    2. After signing in, paste the authorization code below:
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={geminiAuthCode}
+                      onChange={(e) => setGeminiAuthCode(e.target.value)}
+                      placeholder="Paste authorization code…"
+                      className="flex-1 rounded-lg border px-3 py-1.5 text-[11px] outline-none transition-colors focus:border-purple-500"
+                      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-card)", color: "var(--text-primary)" }}
+                    />
+                    <button
+                      onClick={() => {
+                        const code = geminiAuthCode.trim();
+                        if (code) submitCodeMutation.mutate(code);
+                      }}
+                      disabled={!geminiAuthCode.trim() || submitCodeMutation.isPending}
+                      className="rounded-lg px-3 py-1.5 text-[11px] font-medium text-white transition-opacity hover:opacity-80 disabled:opacity-40"
+                      style={{ background: "#a855f7" }}
+                    >
+                      {submitCodeMutation.isPending ? "Submitting…" : "Submit"}
+                    </button>
+                    <button
+                      onClick={() => { setGeminiAuthUrl(null); setGeminiAuthCode(""); }}
+                      className="rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition-opacity hover:opacity-80"
+                      style={{ borderColor: "var(--border-subtle)", color: "var(--text-muted)" }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  {submitCodeMutation.isError && (
+                    <p className="text-[11px] text-red-400">
+                      {submitCodeMutation.error instanceof Error ? submitCodeMutation.error.message : "Failed to submit code"}
+                    </p>
+                  )}
+                  {submitCodeMutation.isSuccess && submitCodeMutation.data?.success && (
+                    <p className="text-[11px]" style={{ color: "#34d399" }}>
+                      ✓ Successfully authenticated!
+                    </p>
+                  )}
+                </div>
+              )}
+              {authMutation.isError && (
+                <p className="mt-2 text-[11px] text-red-400">
+                  {authMutation.error instanceof Error ? authMutation.error.message : "Auth failed"}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Provider rows */}
           <div className="flex flex-col gap-2">
             {providers.map((provider) => {
               const avail = provider.availability;
               const dotColor = avail?.ok ? "#34d399" : avail ? "#f87171" : "#6b7280";
+              const isApiProvider = API_KEY_PROVIDERS.includes(provider.id);
+              const ks = keyStatuses[provider.id];
+              const isExpanded = expandedKeyProvider === provider.id;
               return (
                 <div
                   key={provider.id}
-                  className="flex items-center gap-3 rounded-xl border px-3 py-2.5"
+                  className="rounded-xl border"
                   style={{
                     borderColor: provider.active
                       ? "rgba(168,85,247,0.4)"
@@ -613,35 +828,146 @@ function AIConnection() {
                       : "var(--bg-card)",
                   }}
                 >
-                  <span
-                    className="h-2 w-2 rounded-full flex-shrink-0"
-                    style={{ background: dotColor }}
-                    title={avail?.detail ?? "availability unknown"}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-                      {provider.name}
-                    </p>
-                    <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                      {avail?.detail ?? (provider.type === "cli" ? "CLI tool" : "API key")}
-                    </p>
-                  </div>
-                  {provider.active ? (
+                  <div className="flex items-center gap-3 px-3 py-2.5">
                     <span
-                      className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                      style={{ background: "rgba(168,85,247,0.15)", color: "#a855f7" }}
+                      className="h-2 w-2 rounded-full flex-shrink-0"
+                      style={{ background: dotColor }}
+                      title={avail?.detail ?? "availability unknown"}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                        {provider.name}
+                      </p>
+                      <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                        {avail?.detail ?? (provider.type === "cli" ? "CLI tool" : "API key")}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {isApiProvider && (
+                        <button
+                          onClick={() => setExpandedKeyProvider(isExpanded ? null : provider.id)}
+                          className="rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-opacity hover:opacity-80"
+                          style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
+                          title={ks?.hasKey ? "Manage API key" : "Set API key"}
+                        >
+                          {ks?.hasKey ? "🔑 Key set" : "🔑 Set key"}
+                        </button>
+                      )}
+                      {provider.active ? (
+                        <span
+                          className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                          style={{ background: "rgba(168,85,247,0.15)", color: "#a855f7" }}
+                        >
+                          Active
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => switchMutation.mutate(provider.id)}
+                          disabled={switchMutation.isPending}
+                          className="rounded-lg border px-3 py-1 text-[11px] font-medium transition-opacity hover:opacity-80 disabled:opacity-40"
+                          style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
+                        >
+                          {switchMutation.isPending ? "Switching…" : "Use this"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Expanded API key section */}
+                  {isApiProvider && isExpanded && (
+                    <div
+                      className="border-t px-3 py-2.5"
+                      style={{ borderColor: provider.active ? "rgba(168,85,247,0.2)" : "var(--border-subtle)" }}
                     >
-                      Active
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => switchMutation.mutate(provider.id)}
-                      disabled={switchMutation.isPending}
-                      className="rounded-lg border px-3 py-1 text-[11px] font-medium transition-opacity hover:opacity-80 disabled:opacity-40"
-                      style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
-                    >
-                      {switchMutation.isPending ? "Switching…" : "Use this"}
-                    </button>
+                      {ks?.hasKey ? (
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center gap-2">
+                            <code
+                              className="flex-1 rounded-lg px-3 py-1.5 text-[11px] font-mono"
+                              style={{ background: "rgba(0,0,0,0.2)", color: "var(--text-secondary)" }}
+                            >
+                              {ks.maskedKey}
+                            </code>
+                            <button
+                              onClick={() => clearKeyMutation.mutate(provider.id)}
+                              disabled={clearKeyMutation.isPending}
+                              className="rounded-lg px-3 py-1.5 text-[11px] font-medium text-red-400 transition-opacity hover:bg-red-500/10 hover:opacity-80 disabled:opacity-40"
+                            >
+                              {clearKeyMutation.isPending ? "Clearing…" : "Clear"}
+                            </button>
+                          </div>
+                          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                            Key is stored securely. Clear it to remove, or paste a new one below to replace.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="password"
+                              value={keyInputs[provider.id] ?? ""}
+                              onChange={(e) => setKeyInputs((prev) => ({ ...prev, [provider.id]: e.target.value }))}
+                              placeholder="Paste new API key to replace…"
+                              className="flex-1 rounded-lg border px-3 py-1.5 text-[11px] outline-none transition-colors focus:border-purple-500"
+                              style={{
+                                borderColor: "var(--border-subtle)",
+                                background: "var(--bg-card)",
+                                color: "var(--text-primary)",
+                              }}
+                            />
+                            <button
+                              onClick={() => {
+                                const key = keyInputs[provider.id]?.trim();
+                                if (key) saveKeyMutation.mutate({ providerId: provider.id, apiKey: key });
+                              }}
+                              disabled={!keyInputs[provider.id]?.trim() || saveKeyMutation.isPending}
+                              className="rounded-lg px-3 py-1.5 text-[11px] font-medium text-white transition-opacity hover:opacity-80 disabled:opacity-40"
+                              style={{ background: "#a855f7" }}
+                            >
+                              {saveKeyMutation.isPending ? "Saving…" : "Replace"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                            Paste your API key to enable this provider.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="password"
+                              value={keyInputs[provider.id] ?? ""}
+                              onChange={(e) => setKeyInputs((prev) => ({ ...prev, [provider.id]: e.target.value }))}
+                              placeholder={`Enter ${provider.name} API key…`}
+                              className="flex-1 rounded-lg border px-3 py-1.5 text-[11px] outline-none transition-colors focus:border-purple-500"
+                              style={{
+                                borderColor: "var(--border-subtle)",
+                                background: "var(--bg-card)",
+                                color: "var(--text-primary)",
+                              }}
+                            />
+                            <button
+                              onClick={() => {
+                                const key = keyInputs[provider.id]?.trim();
+                                if (key) saveKeyMutation.mutate({ providerId: provider.id, apiKey: key });
+                              }}
+                              disabled={!keyInputs[provider.id]?.trim() || saveKeyMutation.isPending}
+                              className="rounded-lg px-3 py-1.5 text-[11px] font-medium text-white transition-opacity hover:opacity-80 disabled:opacity-40"
+                              style={{ background: "#a855f7" }}
+                            >
+                              {saveKeyMutation.isPending ? "Saving…" : "Save"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {saveKeyMutation.isError && (
+                        <p className="mt-2 text-[11px] text-red-400">
+                          {saveKeyMutation.error instanceof Error ? saveKeyMutation.error.message : "Failed to save key"}
+                        </p>
+                      )}
+                      {clearKeyMutation.isError && (
+                        <p className="mt-2 text-[11px] text-red-400">
+                          {clearKeyMutation.error instanceof Error ? clearKeyMutation.error.message : "Failed to clear key"}
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
               );

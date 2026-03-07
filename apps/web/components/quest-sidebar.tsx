@@ -300,9 +300,17 @@ export default function QuestSidebar() {
         )}
       </div>
 
-      {/* Footer version */}
+      {/* Footer */}
       <div className="border-t px-5 py-3" style={{ borderColor: "var(--border-subtle)" }}>
-        <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>v1.0</p>
+        <a
+          href="https://samrudhraikote.me"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[10px] transition-colors hover:text-orange-400"
+          style={{ color: "var(--text-muted)" }}
+        >
+          Built by Samrudh ↗
+        </a>
       </div>
     </div>
   );

@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   aiAsk,
   aiNextTask,
@@ -214,14 +216,20 @@ export default function AIProjectPanel({ slug, projectColor }: Props) {
             </button>
             {answer && (
               <div
-                className="rounded-xl border p-4 text-sm leading-relaxed whitespace-pre-wrap"
+                className="rounded-xl border p-4 text-sm leading-relaxed"
                 style={{
                   borderColor: answer.error ? "rgba(248,113,113,0.25)" : "rgba(168,85,247,0.2)",
                   background: answer.error ? "rgba(248,113,113,0.05)" : "rgba(168,85,247,0.04)",
                   color: answer.error ? "#f87171" : "var(--text-primary)",
                 }}
               >
-                {answer.text}
+                {answer.error ? answer.text : (
+                  <div className="prose prose-sm prose-invert max-w-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {answer.text}
+                    </ReactMarkdown>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -268,7 +276,13 @@ export default function AIProjectPanel({ slug, projectColor }: Props) {
                     color: nextTaskSuggestion.error ? "#f87171" : "var(--text-primary)",
                   }}
                 >
-                  {nextTaskSuggestion.text}
+                  {nextTaskSuggestion.error ? nextTaskSuggestion.text : (
+                    <div className="prose prose-sm prose-invert max-w-none">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {nextTaskSuggestion.text}
+                      </ReactMarkdown>
+                    </div>
+                  )}
                 </p>
               </div>
             )}
@@ -376,10 +390,14 @@ export default function AIProjectPanel({ slug, projectColor }: Props) {
                     Draft journal entry
                   </p>
                   <p
-                    className="text-sm leading-relaxed whitespace-pre-wrap"
+                    className="text-sm leading-relaxed"
                     style={{ color: "var(--text-primary)" }}
                   >
-                    {recapDraft}
+                    <div className="prose prose-sm prose-invert max-w-none">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {recapDraft}
+                      </ReactMarkdown>
+                    </div>
                   </p>
                 </div>
                 <button
@@ -587,7 +605,11 @@ export default function AIProjectPanel({ slug, projectColor }: Props) {
                   className="text-xs font-mono whitespace-pre-wrap"
                   style={{ color: "var(--text-primary)" }}
                 >
-                  {bootstrapPlan.plan.raw}
+                  <div className="prose prose-sm prose-invert max-w-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {bootstrapPlan.plan.raw}
+                    </ReactMarkdown>
+                  </div>
                 </pre>
               </div>
             )}

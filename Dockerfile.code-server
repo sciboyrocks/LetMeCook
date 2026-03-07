@@ -69,6 +69,7 @@ RUN EXT_DIR="/home/coder/.local/share/code-server/extensions/letmecook.letmecook
     && cp /tmp/lmc-unpack/extension/.vsixmanifest "$EXT_DIR/.vsixmanifest" 2>/dev/null || true \
     && echo '[{"identifier":{"id":"letmecook.letmecook-extension"},"version":"0.1.0","location":{"scheme":"file","path":"'"$EXT_DIR"'"},"relativeLocation":"letmecook.letmecook-extension-0.1.0","metadata":{"installedTimestamp":1700000000000}}]' \
        > /home/coder/.local/share/code-server/extensions/extensions.json \
+    && cp -r "$EXT_DIR" /tmp/letmecook-ext-image \
     && rm -rf /tmp/letmecook.vsix /tmp/lmc-unpack
 
 # Install Homebrew

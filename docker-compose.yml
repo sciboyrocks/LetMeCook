@@ -22,7 +22,8 @@ services:
       dockerfile: Dockerfile.code-server
     container_name: letmecook-code-server
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - letmecook
     volumes:
       - ${PROJECTS_DIR:-./projects}:/projects
       - /var/run/docker.sock:/var/run/docker.sock
@@ -33,8 +34,8 @@ services:
     environment:
       - DOCKER_USER=coder
       - EXTENSIONS_GALLERY={"serviceUrl":"https://marketplace.visualstudio.com/_apis/public/gallery","itemUrl":"https://marketplace.visualstudio.com/items","cacheUrl":"https://vscode.blob.core.windows.net/gallery/index"}
-      - LETMECOOK_URL=http://localhost:3000
-      - LETMECOOK_DASHBOARD_URL=${LETMECOOK_DASHBOARD_URL:-http://localhost:3001}
+      - LETMECOOK_URL=http://api:3000
+      - LETMECOOK_DASHBOARD_URL=${LETMECOOK_DASHBOARD_URL:-http://web:3001}
       - LETMECOOK_API_KEY=${API_KEY:-}
     user: "0:0"
     entrypoint: /bin/bash
@@ -43,6 +44,16 @@ services:
       - |
         chown -R coder:coder /projects
         chown -R coder:coder /home/coder/.local/share/code-server
+        # Copy built extension into the persistent volume (overwrite stale copies)
+        EXT_SRC="/tmp/letmecook-ext-image"
+        EXT_DST="/home/coder/.local/share/code-server/extensions/letmecook.letmecook-extension-0.1.0"
+        if [ -d "$$EXT_SRC" ]; then
+          rm -rf "$$EXT_DST"
+          cp -r "$$EXT_SRC" "$$EXT_DST"
+          echo '[{"identifier":{"id":"letmecook.letmecook-extension"},"version":"0.1.0","location":{"scheme":"file","path":"'"$$EXT_DST"'"},"relativeLocation":"letmecook.letmecook-extension-0.1.0","metadata":{"installedTimestamp":1700000000000}}]' > /home/coder/.local/share/code-server/extensions/extensions.json
+          chown -R coder:coder "$$EXT_DST"
+          chown coder:coder /home/coder/.local/share/code-server/extensions/extensions.json
+        fi
         if [ -S /var/run/docker.sock ]; then
           DOCKER_GID=$$(stat -c '%g' /var/run/docker.sock)
           if ! getent group "$${DOCKER_GID}" >/dev/null; then
@@ -62,10 +73,12 @@ services:
       - "127.0.0.1:3000:3000"
     volumes:
       - api-data:/app/data
+      - ${PROJECTS_DIR:-./projects}:/projects
     environment:
       - NODE_ENV=production
       - PORT=3000
       - SESSION_SECRET=${SESSION_SECRET}
+      - PROJECTS_DIR=/projects
       - REDIS_URL=redis://redis:6379
       - CODE_SERVER_HOST=code-server
       - CODE_SERVER_PORT=8080
@@ -79,6 +92,8 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - NO_BROWSER=true
+      - BROWSER=none
     networks:
       - letmecook
     depends_on:
