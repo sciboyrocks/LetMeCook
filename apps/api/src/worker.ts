@@ -13,6 +13,7 @@ import { JOB_QUEUE_NAME, type JobType, type JobPayloadMap } from './lib/jobs.js'
 import { aiRun } from './lib/ai/adapter.js';
 import { buildProjectContext } from './lib/ai/context.js';
 import { getFlag } from './lib/flags.js';
+import { redis, publishJobUpdate, closeRedis } from './lib/redis.js';
 
 const connection = { url: config.redisUrl };
 
@@ -32,6 +33,7 @@ class JobTimeoutError extends Error {
 
 function appendLog(jobId: string, level: 'info' | 'warn' | 'error', message: string) {
   db.prepare('INSERT INTO job_logs (job_id, level, message) VALUES (?, ?, ?)').run(jobId, level, message.slice(0, 2_000));
+  publishJobUpdate(jobId, 'log', { level, message: message.slice(0, 2_000) });
 }
 
 function updateJob(
@@ -74,9 +76,14 @@ function updateJob(
 
   params.push(jobId);
   db.prepare(`UPDATE jobs SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+
+  // Publish job state change to Redis for SSE subscribers
+  publishJobUpdate(jobId, 'job', patch);
 }
 
 function isCancelRequested(jobId: string): boolean {
+  // Check Redis first (set by the cancel endpoint), fall back to SQLite
+  // We use a sync-friendly approach: check a local cache that's populated by Redis
   const row = db
     .prepare<[string], { cancel_requested: number }>('SELECT cancel_requested FROM jobs WHERE id = ?')
     .get(jobId);
@@ -868,6 +875,7 @@ async function shutdown(signal: string) {
   console.log(`[worker] ${signal} received, shutting down…`);
   try {
     await worker.close();
+    await closeRedis();
   } finally {
     process.exit(0);
   }

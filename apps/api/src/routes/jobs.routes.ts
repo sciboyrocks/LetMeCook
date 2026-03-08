@@ -1,6 +1,7 @@
 import { createReadStream, existsSync } from 'node:fs';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { db } from '../db/index.js';
+import { redis, redisSub } from '../lib/redis.js';
 
 const requireAuth = (req: FastifyRequest, reply: FastifyReply) =>
   (req.server as FastifyInstance).requireAuth(req, reply);
@@ -153,6 +154,9 @@ export async function jobsRoutes(fastify: FastifyInstance) {
          WHERE id = ?`
       ).run(job.id);
 
+      // Also set cancel signal in Redis for fast worker pickup
+      await redis.set(`job:cancel:${job.id}`, '1', 'EX', 3600);
+
       db.prepare('INSERT INTO job_logs (job_id, level, message) VALUES (?, ?, ?)').run(
         job.id,
         'warn',
@@ -179,57 +183,87 @@ export async function jobsRoutes(fastify: FastifyInstance) {
       reply.raw.setHeader('X-Accel-Buffering', 'no');
       reply.hijack();
 
-      let lastLogId = 0;
-
       const emit = (event: string, payload: unknown) => {
         reply.raw.write(`event: ${event}\n`);
         reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
       };
 
-      const emitSnapshot = () => {
-        const job = readJob(jobId);
-        if (!job) {
-          emit('error', { code: 'NOT_FOUND', message: 'Job not found' });
-          reply.raw.end();
-          return false;
-        }
-
+      // Send initial snapshot from DB (includes full log history)
+      let lastLogId = 0;
+      {
         const newLogs = readLogs(jobId, lastLogId);
         for (const log of newLogs) {
           lastLogId = log.id;
           emit('log', log);
         }
+        emit('job', serializeJob(existing));
 
-        emit('job', serializeJob(job));
-
-        if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
-          emit('done', { status: job.status });
+        if (existing.status === 'completed' || existing.status === 'failed' || existing.status === 'cancelled') {
+          emit('done', { status: existing.status });
           reply.raw.end();
-          return false;
+          return;
         }
-
-        return true;
-      };
+      }
 
       emit('ready', { jobId });
-      const shouldKeepGoing = emitSnapshot();
-      if (!shouldKeepGoing) return;
 
-      const heartbeat = setInterval(() => {
+      // Subscribe to Redis channel for real-time updates from the worker
+      const channel = `job:${jobId}`;
+      const sub = redisSub.duplicate();
+      await sub.subscribe(channel);
+
+      const onMessage = (ch: string, message: string) => {
+        if (ch !== channel) return;
         try {
-          if (!emitSnapshot()) {
-            clearInterval(heartbeat);
+          const parsed = JSON.parse(message) as { event: string; data: unknown };
+          emit(parsed.event, parsed.data);
+
+          // Check if this is a terminal state
+          if (parsed.event === 'job') {
+            const patch = parsed.data as Record<string, unknown>;
+            if (patch.status === 'completed' || patch.status === 'failed' || patch.status === 'cancelled') {
+              emit('done', { status: patch.status });
+              cleanup();
+            }
+          }
+        } catch {}
+      };
+
+      sub.on('message', onMessage);
+
+      // Fallback: poll every 5 seconds in case pub/sub misses something (e.g. reconnect)
+      const fallback = setInterval(() => {
+        try {
+          const job = readJob(jobId);
+          if (!job) {
+            cleanup();
+            return;
+          }
+          if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+            // Emit any final logs we missed
+            const newLogs = readLogs(jobId, lastLogId);
+            for (const log of newLogs) {
+              lastLogId = log.id;
+              emit('log', log);
+            }
+            emit('job', serializeJob(job));
+            emit('done', { status: job.status });
+            cleanup();
           }
         } catch {
-          clearInterval(heartbeat);
-          try {
-            reply.raw.end();
-          } catch {}
+          cleanup();
         }
-      }, 1000);
+      }, 5000);
+
+      function cleanup() {
+        clearInterval(fallback);
+        sub.unsubscribe(channel).catch(() => {});
+        sub.disconnect();
+        try { reply.raw.end(); } catch {}
+      }
 
       req.raw.on('close', () => {
-        clearInterval(heartbeat);
+        cleanup();
       });
     }
   );

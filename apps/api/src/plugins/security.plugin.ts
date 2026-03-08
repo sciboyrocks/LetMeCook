@@ -4,6 +4,7 @@ import fastifyHelmet from '@fastify/helmet';
 import fastifyCors from '@fastify/cors';
 import fastifyRateLimit from '@fastify/rate-limit';
 import { config } from '../config.js';
+import { redis } from '../lib/redis.js';
 
 async function securityPlugin(fastify: FastifyInstance) {
   await fastify.register(fastifyHelmet, {
@@ -37,6 +38,7 @@ async function securityPlugin(fastify: FastifyInstance) {
     global: true,
     max: 300,
     timeWindow: '15 minutes',
+    redis,
     keyGenerator: (req) => {
       const ip = req.ip ?? '0.0.0.0';
       return ip.startsWith('::ffff:') ? ip.slice(7) : ip;

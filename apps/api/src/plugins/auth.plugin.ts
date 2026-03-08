@@ -4,6 +4,7 @@ import fastifyCookie from '@fastify/cookie';
 import fastifySession from '@fastify/session';
 import { db } from '../db/index.js';
 import { config } from '../config.js';
+import { redis } from '../lib/redis.js';
 
 declare module 'fastify' {
   interface Session {
@@ -13,11 +14,44 @@ declare module 'fastify' {
   }
 }
 
+// Redis-backed session store compatible with @fastify/session's SessionStore interface
+const SESSION_PREFIX = 'sess:';
+const SESSION_TTL = 86_400; // 24h in seconds
+
+const redisSessionStore = {
+  set(sessionId: string, session: any, callback: (err?: any) => void) {
+    redis
+      .set(`${SESSION_PREFIX}${sessionId}`, JSON.stringify(session), 'EX', SESSION_TTL)
+      .then(() => callback())
+      .catch(callback);
+  },
+  get(sessionId: string, callback: (err: any, result?: any) => void) {
+    redis
+      .get(`${SESSION_PREFIX}${sessionId}`)
+      .then((data) => {
+        if (!data) return callback(null, null);
+        try {
+          callback(null, JSON.parse(data));
+        } catch {
+          callback(null, null);
+        }
+      })
+      .catch(callback);
+  },
+  destroy(sessionId: string, callback: (err?: any) => void) {
+    redis
+      .del(`${SESSION_PREFIX}${sessionId}`)
+      .then(() => callback())
+      .catch(callback);
+  },
+};
+
 async function authPlugin(fastify: FastifyInstance) {
   await fastify.register(fastifyCookie);
   await fastify.register(fastifySession, {
     secret: config.sessionSecret,
     cookieName: '__lmc_sid',
+    store: redisSessionStore,
     cookie: {
       secure: config.isProd,
       httpOnly: true,

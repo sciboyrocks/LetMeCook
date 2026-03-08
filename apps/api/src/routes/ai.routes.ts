@@ -41,6 +41,7 @@ import {
 import { aiRun, getAIUsageStats, AIRateLimitError } from '../lib/ai/adapter.js';
 import { buildProjectContext } from '../lib/ai/context.js';
 import { enqueueJob } from '../lib/jobs.js';
+import { cacheGet, cacheSet, cacheDel } from '../lib/redis.js';
 
 const requireAuth = (req: FastifyRequest, reply: FastifyReply) =>
   (req.server as FastifyInstance).requireAuth(req, reply);
@@ -131,12 +132,18 @@ export async function aiRoutes(fastify: FastifyInstance) {
     }
   );
 
-  // GET /api/ai/usage — usage stats for dashboard widget
+  // GET /api/ai/usage — usage stats for dashboard widget (cached 60s)
   fastify.get(
     '/api/ai/usage',
     { preHandler: [fastify.requireAuth as typeof requireAuth] },
     async (_req, reply) => {
-      return reply.send({ ok: true, data: getAIUsageStats() });
+      const cacheKey = 'cache:ai:usage';
+      const cached = await cacheGet(cacheKey);
+      if (cached) return reply.send({ ok: true, data: cached });
+
+      const data = await getAIUsageStats();
+      await cacheSet(cacheKey, data, 60);
+      return reply.send({ ok: true, data });
     }
   );
 

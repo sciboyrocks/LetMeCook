@@ -16,6 +16,8 @@ import { backupsRoutes } from './routes/backups.routes.js';
 import { aiRoutes } from './routes/ai.routes.js';
 import { codeServerProxy } from './proxy/code-server.js';
 import { config } from './config.js';
+import { startAuditFlusher, stopAuditFlusher, flushAuditLogs } from './lib/audit.js';
+import { closeRedis } from './lib/redis.js';
 
 export async function buildApp() {
   const fastify = Fastify({
@@ -29,6 +31,16 @@ export async function buildApp() {
   // Plugins (order matters: security → auth → routes)
   await fastify.register(securityPlugin);
   await fastify.register(authPlugin);
+
+  // Start background flushers
+  startAuditFlusher();
+
+  // Graceful shutdown: flush buffers + close Redis
+  fastify.addHook('onClose', async () => {
+    stopAuditFlusher();
+    await flushAuditLogs();
+    await closeRedis();
+  });
 
   // Routes
   await fastify.register(authRoutes);

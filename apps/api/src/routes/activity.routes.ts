@@ -1,8 +1,13 @@
 /**
  * activity.routes.ts — Activity tracking: heartbeat upsert + heatmap + per-project breakdown
+ *
+ * Heartbeats are buffered in Redis and periodically flushed to SQLite,
+ * dramatically reducing write pressure on the database.
+ * Dashboard queries (heatmap, weekly-summary) are cached in Redis.
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { db } from '../db/index.js';
+import { redis, cacheGet, cacheSet, cacheDel, cacheInvalidatePattern } from '../lib/redis.js';
 
 const requireAuth = (req: FastifyRequest, reply: FastifyReply) =>
   (req.server as FastifyInstance).requireAuth(req, reply);
@@ -11,11 +16,74 @@ function todayDateStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+// ─── Heartbeat flusher ─────────────────────────────────────────────────────
+// Heartbeats accumulate in Redis hashes: `hb:<date>` with field = projectId.
+// A periodic flush drains them into SQLite every 60 seconds.
+
+let flushTimer: ReturnType<typeof setInterval> | null = null;
+
+async function flushHeartbeats(): Promise<void> {
+  // Scan for all hb:* keys
+  let cursor = '0';
+  do {
+    const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', 'hb:*', 'COUNT', 50);
+    cursor = nextCursor;
+    for (const key of keys) {
+      const date = key.slice(3); // strip 'hb:'
+      const entries = await redis.hgetall(key);
+      if (Object.keys(entries).length === 0) continue;
+
+      // Atomically read-and-delete: get all fields then delete the key
+      // (next heartbeat creates a fresh key)
+      await redis.del(key);
+
+      const upsert = db.prepare(
+        `INSERT INTO activity_logs (project_id, date, minutes)
+         VALUES (?, ?, ?)
+         ON CONFLICT(project_id, date) DO UPDATE SET
+           minutes = minutes + ?,
+           updated_at = CURRENT_TIMESTAMP`
+      );
+
+      const touchProject = db.prepare(
+        'UPDATE projects SET last_opened_at = CURRENT_TIMESTAMP WHERE id = ?'
+      );
+
+      const batchWrite = db.transaction(() => {
+        for (const [projectId, mins] of Object.entries(entries)) {
+          const minutes = parseInt(mins, 10) || 0;
+          if (minutes <= 0) continue;
+          upsert.run(projectId, date, minutes, minutes);
+          touchProject.run(projectId);
+        }
+      });
+
+      batchWrite();
+    }
+  } while (cursor !== '0');
+}
+
+function startFlushTimer(): void {
+  if (flushTimer) return;
+  flushTimer = setInterval(() => {
+    flushHeartbeats().catch((err) => console.error('[heartbeat-flush]', err));
+  }, 60_000); // every 60 seconds
+}
+
 export async function activityRoutes(fastify: FastifyInstance) {
+  // Start the background flush timer when routes are registered
+  startFlushTimer();
+
+  // Ensure pending heartbeats are flushed on shutdown
+  fastify.addHook('onClose', async () => {
+    if (flushTimer) clearInterval(flushTimer);
+    await flushHeartbeats();
+  });
+
   /**
    * POST /api/activity/heartbeat
    * Body: { projectId: string }
-   * Upserts +2 minutes for the given project on today's date.
+   * Buffers +2 minutes in Redis for the given project on today's date.
    */
   fastify.post<{ Body: { projectId?: string } }>(
     '/api/activity/heartbeat',
@@ -34,25 +102,31 @@ export async function activityRoutes(fastify: FastifyInstance) {
       }
 
       const date = todayDateStr();
+      const hbKey = `hb:${date}`;
 
-      db.prepare(
-        `INSERT INTO activity_logs (project_id, date, minutes)
-         VALUES (?, ?, 2)
-         ON CONFLICT(project_id, date) DO UPDATE SET
-           minutes = minutes + 2,
-           updated_at = CURRENT_TIMESTAMP`
-      ).run(projectId, date);
+      // Atomic increment in Redis — no SQLite write
+      const newMinutes = await redis.hincrby(hbKey, projectId, 2);
+      // Ensure the key expires after 48h (covers timezone edge cases)
+      await redis.expire(hbKey, 172_800);
 
-      // Also touch last_opened_at on the project
-      db.prepare('UPDATE projects SET last_opened_at = CURRENT_TIMESTAMP WHERE id = ?').run(projectId);
+      // Track last-active in Redis for instant reads
+      await redis.set('last-active', JSON.stringify({
+        projectId,
+        date,
+      }), 'EX', 86_400);
 
-      const row = db
+      // Invalidate cached dashboard data so next read is fresh
+      await cacheDel('cache:activity:heatmap', 'cache:activity:weekly-summary', 'cache:activity:last-active');
+
+      // Get total from Redis buffer + SQLite historical
+      const dbRow = db
         .prepare<[string, string], { minutes: number }>(
           'SELECT minutes FROM activity_logs WHERE project_id = ? AND date = ?'
         )
         .get(projectId, date);
+      const totalMinutes = (dbRow?.minutes ?? 0) + newMinutes;
 
-      return reply.send({ ok: true, data: { date, minutes: row?.minutes ?? 2 } });
+      return reply.send({ ok: true, data: { date, minutes: totalMinutes } });
     }
   );
 
@@ -60,12 +134,17 @@ export async function activityRoutes(fastify: FastifyInstance) {
    * GET /api/activity/heatmap?days=N
    * Returns daily totals for the last N days (default 365).
    * Shape: { date: string; count: number }[]
+   * Cached in Redis for 5 minutes.
    */
   fastify.get<{ Querystring: { days?: string } }>(
     '/api/activity/heatmap',
     { preHandler: [fastify.requireAuth as typeof requireAuth] },
     async (req, reply) => {
       const days = Math.min(Math.max(1, Number(req.query.days) || 365), 730);
+      const cacheKey = 'cache:activity:heatmap';
+
+      const cached = await cacheGet<{ date: string; count: number }[]>(cacheKey);
+      if (cached) return reply.send({ ok: true, data: cached });
 
       const rows = db
         .prepare<[number], { date: string; count: number }>(
@@ -77,6 +156,20 @@ export async function activityRoutes(fastify: FastifyInstance) {
         )
         .all(days);
 
+      // Merge in today's unflushed Redis data
+      const today = todayDateStr();
+      const pendingToday = await redis.hgetall(`hb:${today}`);
+      if (Object.keys(pendingToday).length > 0) {
+        const pendingTotal = Object.values(pendingToday).reduce((s, v) => s + (parseInt(v, 10) || 0), 0);
+        const todayRow = rows.find((r) => r.date === today);
+        if (todayRow) {
+          todayRow.count += pendingTotal;
+        } else if (pendingTotal > 0) {
+          rows.push({ date: today, count: pendingTotal });
+        }
+      }
+
+      await cacheSet(cacheKey, rows, 300); // 5 min cache
       return reply.send({ ok: true, data: rows });
     }
   );
@@ -107,6 +200,18 @@ export async function activityRoutes(fastify: FastifyInstance) {
         )
         .all(project.id, days);
 
+      // Merge today's pending Redis data for this project
+      const today = todayDateStr();
+      const pending = parseInt(await redis.hget(`hb:${today}`, project.id) ?? '0', 10);
+      if (pending > 0) {
+        const todayRow = rows.find((r) => r.date === today);
+        if (todayRow) {
+          todayRow.minutes += pending;
+        } else {
+          rows.push({ date: today, minutes: pending });
+        }
+      }
+
       return reply.send({ ok: true, data: rows });
     }
   );
@@ -114,11 +219,16 @@ export async function activityRoutes(fastify: FastifyInstance) {
   /**
    * GET /api/activity/last-active
    * Returns the most recently active project (by heartbeat).
+   * Checks Redis first for very recent activity.
    */
   fastify.get(
     '/api/activity/last-active',
     { preHandler: [fastify.requireAuth as typeof requireAuth] },
     async (_req, reply) => {
+      const cacheKey = 'cache:activity:last-active';
+      const cached = await cacheGet(cacheKey);
+      if (cached) return reply.send({ ok: true, data: cached });
+
       const row = db
         .prepare<[], { project_id: string; date: string; minutes: number; name: string; slug: string }>(
           `SELECT a.project_id, a.date, a.minutes, p.name, p.slug
@@ -133,28 +243,32 @@ export async function activityRoutes(fastify: FastifyInstance) {
         return reply.send({ ok: true, data: null });
       }
 
-      return reply.send({
-        ok: true,
-        data: {
-          projectId: row.project_id,
-          name: row.name,
-          slug: row.slug,
-          date: row.date,
-          minutes: row.minutes,
-        },
-      });
+      const data = {
+        projectId: row.project_id,
+        name: row.name,
+        slug: row.slug,
+        date: row.date,
+        minutes: row.minutes,
+      };
+
+      await cacheSet(cacheKey, data, 120); // 2 min cache
+      return reply.send({ ok: true, data });
     }
   );
 
   /**
    * GET /api/activity/weekly-summary
    * Returns stats for the current week: total minutes, top project, streak, projects worked on.
-   * Used by the "Weekly Dev Wrapped" banner.
+   * Used by the "Weekly Dev Wrapped" banner. Cached for 5 minutes.
    */
   fastify.get(
     '/api/activity/weekly-summary',
     { preHandler: [fastify.requireAuth as typeof requireAuth] },
     async (_req, reply) => {
+      const cacheKey = 'cache:activity:weekly-summary';
+      const cached = await cacheGet(cacheKey);
+      if (cached) return reply.send({ ok: true, data: cached });
+
       // Current week = last 7 days
       const totalRow = db
         .prepare<[], { total: number }>(
@@ -185,15 +299,17 @@ export async function activityRoutes(fastify: FastifyInstance) {
         .get();
 
       // Streak: consecutive days with activity going backwards from today
-      const recentDays = db
-        .prepare<[], { date: string }>(
-          `SELECT DISTINCT date FROM activity_logs
-           WHERE date <= date('now')
-           ORDER BY date DESC
-           LIMIT 365`
-        )
-        .all()
-        .map((r) => r.date);
+      const recentDays = new Set(
+        db
+          .prepare<[], { date: string }>(
+            `SELECT DISTINCT date FROM activity_logs
+             WHERE date <= date('now')
+             ORDER BY date DESC
+             LIMIT 365`
+          )
+          .all()
+          .map((r) => r.date)
+      );
 
       let streak = 0;
       const today = new Date();
@@ -201,24 +317,24 @@ export async function activityRoutes(fastify: FastifyInstance) {
         const d = new Date(today);
         d.setDate(d.getDate() - i);
         const dateStr = d.toISOString().slice(0, 10);
-        if (recentDays.includes(dateStr)) {
+        if (recentDays.has(dateStr)) {
           streak++;
         } else {
           break;
         }
       }
 
-      return reply.send({
-        ok: true,
-        data: {
-          totalMinutes: totalRow?.total ?? 0,
-          topProject: topProject
-            ? { name: topProject.name, slug: topProject.slug, minutes: topProject.total }
-            : null,
-          projectsWorkedOn: projectsWorkedOn?.cnt ?? 0,
-          streak,
-        },
-      });
+      const data = {
+        totalMinutes: totalRow?.total ?? 0,
+        topProject: topProject
+          ? { name: topProject.name, slug: topProject.slug, minutes: topProject.total }
+          : null,
+        projectsWorkedOn: projectsWorkedOn?.cnt ?? 0,
+        streak,
+      };
+
+      await cacheSet(cacheKey, data, 300); // 5 min cache
+      return reply.send({ ok: true, data });
     }
   );
 }

@@ -7,6 +7,7 @@ import { db } from '../db/index.js';
 import { config } from '../config.js';
 import { slugify } from '../lib/slugify.js';
 import { enqueueJob } from '../lib/jobs.js';
+import { cacheGet, cacheSet, cacheDel } from '../lib/redis.js';
 
 function countFiles(dir: string): number {
   if (!existsSync(dir)) return 0;
@@ -38,8 +39,14 @@ const requireAuth = (req: FastifyRequest, reply: FastifyReply) =>
   (req.server as FastifyInstance).requireAuth(req, reply);
 
 export async function projectsRoutes(fastify: FastifyInstance) {
-  // GET /api/projects
+  const PROJECTS_CACHE_KEY = 'cache:projects:list';
+
+  // GET /api/projects (cached 30s)
   fastify.get('/api/projects', { preHandler: [fastify.requireAuth as typeof requireAuth] }, async (_req, reply) => {
+    // Check Redis cache first
+    const cached = await cacheGet(PROJECTS_CACHE_KEY);
+    if (cached) return reply.send({ ok: true, data: cached });
+
     // Auto-discover folders on disk not yet registered
     try {
       const entries = readdirSync(config.projectsDir, { withFileTypes: true });
@@ -65,6 +72,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
       fileCount: countFiles(join(config.projectsDir, (p.slug ?? p.id) as string)),
     }));
 
+    await cacheSet(PROJECTS_CACHE_KEY, enriched, 30); // 30s cache
     return reply.send({ ok: true, data: enriched });
   });
 
@@ -109,6 +117,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
       );
 
       const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+      await cacheDel(PROJECTS_CACHE_KEY);
       return reply.status(201).send({ ok: true, data: project });
     }
   );
@@ -139,6 +148,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
       );
 
       const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+      await cacheDel(PROJECTS_CACHE_KEY);
       return reply.send({ ok: true, data: project });
     }
   );
@@ -176,6 +186,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
       if (existsSync(projectDir)) rmSync(projectDir, { recursive: true, force: true });
 
       db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+      await cacheDel(PROJECTS_CACHE_KEY);
       return reply.send({ ok: true, data: { success: true } });
     }
   );

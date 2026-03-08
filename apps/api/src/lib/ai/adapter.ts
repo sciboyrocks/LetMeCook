@@ -3,13 +3,14 @@
  *
  * - Secret redaction before prompts go out
  * - Usage tracking in ai_runs table
- * - Per-project + global daily rate limiting
+ * - Per-project + global daily rate limiting (Redis atomic counters)
  * - Delegates to the active provider via registry
  */
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/index.js';
 import { getActiveProvider } from './provider-registry.js';
 import type { AICompleteOptions } from './providers/base.js';
+import { dailyIncr, redis } from '../redis.js';
 
 // ─── Safety limits ─────────────────────────────────────────────────────────
 // Override via settings table: key = 'ai_daily_cap' / key = 'ai_project_daily_cap'
@@ -52,42 +53,28 @@ export class AIRateLimitError extends Error {
   }
 }
 
-function checkAndIncrementGlobal(): void {
+function checkAndIncrementGlobal(): Promise<void> {
   const today = todayDate();
   const cap = getSettingInt('ai_daily_cap', DEFAULT_GLOBAL_DAILY_CAP);
+  const key = `ai:daily:global:${today}`;
 
-  db.prepare(`
-    INSERT INTO ai_global_limits (date, calls) VALUES (?, 1)
-    ON CONFLICT (date) DO UPDATE SET calls = calls + 1
-  `).run(today);
-
-  const row = db
-    .prepare<[string], { calls: number }>('SELECT calls FROM ai_global_limits WHERE date = ?')
-    .get(today);
-
-  if ((row?.calls ?? 0) > cap) {
-    throw new AIRateLimitError(`Global AI daily cap (${cap}) reached. Try again tomorrow.`);
-  }
+  return dailyIncr(key).then((count) => {
+    if (count > cap) {
+      throw new AIRateLimitError(`Global AI daily cap (${cap}) reached. Try again tomorrow.`);
+    }
+  });
 }
 
-function checkAndIncrementProject(projectId: string): void {
+function checkAndIncrementProject(projectId: string): Promise<void> {
   const today = todayDate();
   const cap = getSettingInt('ai_project_daily_cap', DEFAULT_PROJECT_DAILY_CAP);
+  const key = `ai:daily:project:${projectId}:${today}`;
 
-  db.prepare(`
-    INSERT INTO ai_project_limits (project_id, date, calls) VALUES (?, ?, 1)
-    ON CONFLICT (project_id, date) DO UPDATE SET calls = calls + 1
-  `).run(projectId, today);
-
-  const row = db
-    .prepare<[string, string], { calls: number }>(
-      'SELECT calls FROM ai_project_limits WHERE project_id = ? AND date = ?'
-    )
-    .get(projectId, today);
-
-  if ((row?.calls ?? 0) > cap) {
-    throw new AIRateLimitError(`Project AI daily cap (${cap}) reached. Try again tomorrow.`);
-  }
+  return dailyIncr(key).then((count) => {
+    if (count > cap) {
+      throw new AIRateLimitError(`Project AI daily cap (${cap}) reached. Try again tomorrow.`);
+    }
+  });
 }
 
 // ─── Core run ──────────────────────────────────────────────────────────────
@@ -110,9 +97,9 @@ export async function aiRun(opts: AIRunOptions): Promise<AIRunResult> {
   const { action, projectId, systemPrompt, userPrompt, timeoutMs, maxTokens } = opts;
   const provider = getActiveProvider();
 
-  // Rate limit checks
-  checkAndIncrementGlobal();
-  if (projectId) checkAndIncrementProject(projectId);
+  // Rate limit checks (Redis atomic counters)
+  await checkAndIncrementGlobal();
+  if (projectId) await checkAndIncrementProject(projectId);
 
   // Redact secrets from prompts before they leave the server
   const safeSystem = systemPrompt ? redactSecrets(systemPrompt) : undefined;
@@ -166,7 +153,7 @@ export async function aiRun(opts: AIRunOptions): Promise<AIRunResult> {
 
 // ─── Usage stats (for dashboard widget) ──────────────────────────────────
 
-export function getAIUsageStats() {
+export async function getAIUsageStats() {
   const today = todayDate();
   const thisWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
@@ -183,9 +170,8 @@ export function getAIUsageStats() {
     .get(thisWeek);
 
   const globalCap = getSettingInt('ai_daily_cap', DEFAULT_GLOBAL_DAILY_CAP);
-  const globalToday = db
-    .prepare<[string], { calls: number }>('SELECT calls FROM ai_global_limits WHERE date = ?')
-    .get(today);
+  // Read today's counter from Redis instead of SQLite
+  const globalTodayCalls = parseInt(await redis.get(`ai:daily:global:${today}`) ?? '0', 10);
 
   return {
     today: {
@@ -193,7 +179,7 @@ export function getAIUsageStats() {
       errors: todayStats?.errors ?? 0,
       avgLatencyMs: Math.round(todayStats?.avg_latency ?? 0),
       cap: globalCap,
-      remaining: Math.max(0, globalCap - (globalToday?.calls ?? 0)),
+      remaining: Math.max(0, globalCap - globalTodayCalls),
     },
     week: {
       calls: weekStats?.total ?? 0,

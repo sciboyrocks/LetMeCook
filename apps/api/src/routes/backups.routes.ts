@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { db } from '../db/index.js';
 import { enqueueJob } from '../lib/jobs.js';
 import { audit } from '../lib/audit.js';
+import { cacheGet, cacheSet, cacheDel } from '../lib/redis.js';
 
 const requireAuth = (req: FastifyRequest, reply: FastifyReply) =>
   (req.server as FastifyInstance).requireAuth(req, reply);
@@ -42,6 +43,7 @@ export async function backupsRoutes(fastify: FastifyInstance) {
       });
 
       audit(req, 'backup.start', 'project', project.id, project.slug);
+      await cacheDel('cache:backups:latest'); // bust cache so next read sees the new backup
 
       return reply.send({ ok: true, data: { jobId: job.id, status: job.status, timeoutMs: job.timeoutMs } });
     }
@@ -82,11 +84,15 @@ export async function backupsRoutes(fastify: FastifyInstance) {
     }
   );
 
-  // GET /api/backups/latest  — last backup per project (for dashboard badges)
+  // GET /api/backups/latest  — last backup per project (for dashboard badges, cached 5 min)
   fastify.get(
     '/api/backups/latest',
     { preHandler: [fastify.requireAuth as typeof requireAuth] },
     async (_req, reply) => {
+      const cacheKey = 'cache:backups:latest';
+      const cached = await cacheGet(cacheKey);
+      if (cached) return reply.send({ ok: true, data: cached });
+
       const rows = db
         .prepare<[], { project_id: string; created_at: string }>(
           `SELECT project_id, MAX(created_at) as created_at
@@ -99,6 +105,7 @@ export async function backupsRoutes(fastify: FastifyInstance) {
       for (const row of rows) {
         map[row.project_id] = row.created_at;
       }
+      await cacheSet(cacheKey, map, 300); // 5 min cache
       return reply.send({ ok: true, data: map });
     }
   );
