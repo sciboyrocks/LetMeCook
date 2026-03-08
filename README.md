@@ -1,6 +1,8 @@
-<h1 align="center">
-  🍳 LetMeCook
-</h1>
+<p align="center">
+  <img src="apps/web/public/logo.png" alt="LetMeCook" width="200" />
+</p>
+
+<h1 align="center">LetMeCook</h1>
 
 <p align="center">
   <strong>A self-hosted developer operating system — manage projects, write code, track activity, and ship faster from one dashboard.</strong>
@@ -9,9 +11,9 @@
 <p align="center">
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-features">Features</a> •
+  <a href="#-screenshots">Screenshots</a> •
   <a href="#%EF%B8%8F-architecture">Architecture</a> •
-  <a href="#-configuration">Configuration</a> •
-  <a href="#-roadmap">Roadmap</a>
+  <a href="#-configuration">Configuration</a>
 </p>
 
 ---
@@ -122,6 +124,36 @@ On first visit you'll be guided through **TOTP setup** — scan the QR code with
 - **System monitor** — live CPU, RAM, disk, and container stats
 - **Google Drive backups** — automatic project backups (keeps last 7)
 - **Audit logging** for security-sensitive operations
+
+---
+
+## 📸 Screenshots
+
+### Login
+![Login](screenshots/login.png)
+
+### Dashboard
+![Dashboard](screenshots/dashboard.png)
+
+### Projects
+![New Project](screenshots/new_project.png)
+
+### Tasks
+![Tasks](screenshots/tasks.png)
+
+### Journal
+![Journal](screenshots/journal.png)
+
+### Connections
+![Connections](screenshots/connections.png)
+
+### System Monitor
+![Monitor](screenshots/monitor.png)
+
+### Worker Logs
+![Worker Logs](screenshots/workerLogs.png)
+
+---
 
 ### 🔒 Security
 - TOTP-only authentication (no passwords to leak)
@@ -315,23 +347,6 @@ pnpm dev
 ```
 
 This starts the API (port 3000) and web frontend (port 3001) concurrently with hot reload.
-
----
-
-## 🗺 Roadmap
-
-See [ROADMAP.md](ROADMAP.md) for the full implementation plan.
-
-**Completed:**
-- ✅ Monorepo scaffold (TypeScript, Fastify, Next.js, pnpm, Docker)
-- ✅ Auth & Core API (TOTP, project CRUD, code-server proxy)
-- ✅ Dashboard UI (project cards, search, pinning, dark mode)
-- ✅ Background Jobs (BullMQ worker, clone, scaffold, export, SSE progress)
-- ✅ Tasks & Quest Log (kanban, daily priorities, milestones)
-- ✅ Activity Tracking (heartbeat, heatmap, weekly wrapped, journal)
-- ✅ Infrastructure (tunnels, monitor, backups, audit logs)
-- ✅ VS Code Extension (dashboard, tasks, heartbeat, AI commands)
-- ✅ AI Copilot Layer (multi-provider, task gen, commit messages, repo chat)
 
 ---
 

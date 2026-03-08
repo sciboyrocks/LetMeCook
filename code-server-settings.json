@@ -10,6 +10,6 @@
   "terminal.integrated.fontSize": 13,
   "workbench.colorTheme": "Default Dark Modern",
   "files.autoSave": "afterDelay",
-  "files.autoSaveDelay": 1000,
+  "files.autoSaveDelay": 100,
   "explorer.confirmDelete": false
 }
