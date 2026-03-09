@@ -24,6 +24,11 @@
           "type": "string",
           "default": "",
           "description": "API key for authenticating with the LetMeCook server (overridden by LETMECOOK_API_KEY env var)"
+        },
+        "letmecook.devDomain": {
+          "type": "string",
+          "default": "samrudhraikote.me",
+          "description": "Domain used for port forwarding URLs, e.g. {port}.samrudhraikote.me (overridden by LETMECOOK_DEV_DOMAIN env var)"
         }
       }
     },

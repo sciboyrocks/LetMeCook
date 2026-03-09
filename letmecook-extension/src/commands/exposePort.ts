@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { apiRequest } from '../api.js';
+import { apiRequest, getPortUrl } from '../api.js';
 import { getCurrentProject } from '../project.js';
 
 interface TunnelData {
@@ -25,62 +25,85 @@ export async function exposePort(): Promise<void> {
   if (!portInput) return;
   const port = parseInt(portInput, 10);
 
-  // Resolve project ID if available (optional field)
-  let projectId: string | undefined;
-  try {
-    const project = await getCurrentProject();
-    projectId = project?.id;
-  } catch {
-    // Non-fatal — projectId is optional
+  // The dev URL is always available via nginx — no wait needed.
+  const devUrl = getPortUrl(port);
+
+  const choice = await vscode.window.showInformationMessage(
+    `Port ${port} is accessible at ${devUrl}`,
+    'Copy Link',
+    'Open in Browser',
+    'Share Externally (cloudflared)',
+  );
+
+  if (choice === 'Copy Link') {
+    await vscode.env.clipboard.writeText(devUrl);
+    vscode.window.showInformationMessage('Link copied to clipboard.');
+    return;
   }
 
-  await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: `Starting cloudflared tunnel on port ${port}…`,
-      cancellable: false,
-    },
-    async () => {
-      try {
-        let tunnel = await apiRequest<TunnelData>('POST', '/api/tunnels/expose', {
-          port,
-          ...(projectId ? { projectId } : {}),
-        });
+  if (choice === 'Open in Browser') {
+    await vscode.env.openExternal(vscode.Uri.parse(devUrl));
+    return;
+  }
 
-        // Poll for the URL if not yet available (cloudflared can take a few seconds)
-        if (!tunnel.url && tunnel.id) {
-          for (let i = 0; i < 10; i++) {
-            await new Promise((r) => setTimeout(r, 2000));
-            try {
-              const active = await apiRequest<TunnelData[]>('GET', '/api/tunnels/active');
-              const updated = active.find((t) => t.id === tunnel.id);
-              if (updated?.url) {
-                tunnel = updated;
-                break;
+  if (choice === 'Share Externally (cloudflared)') {
+    // Resolve project ID if available (optional field)
+    let projectId: string | undefined;
+    try {
+      const project = await getCurrentProject();
+      projectId = project?.id;
+    } catch {
+      // Non-fatal — projectId is optional
+    }
+
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Starting cloudflared tunnel on port ${port}…`,
+        cancellable: false,
+      },
+      async () => {
+        try {
+          let tunnel = await apiRequest<TunnelData>('POST', '/api/tunnels/expose', {
+            port,
+            ...(projectId ? { projectId } : {}),
+          });
+
+          // Poll for the URL if not yet available (cloudflared can take a few seconds)
+          if (!tunnel.url && tunnel.id) {
+            for (let i = 0; i < 10; i++) {
+              await new Promise((r) => setTimeout(r, 2000));
+              try {
+                const active = await apiRequest<TunnelData[]>('GET', '/api/tunnels/active');
+                const updated = active.find((t) => t.id === tunnel.id);
+                if (updated?.url) {
+                  tunnel = updated;
+                  break;
+                }
+              } catch {
+                // keep polling
               }
-            } catch {
-              // keep polling
             }
           }
-        }
 
-        const url = tunnel.url ?? '(URL unavailable — check Monitor page)';
-        const choice = await vscode.window.showInformationMessage(
-          `Tunnel active: ${url}`,
-          ...(tunnel.url ? ['Copy Link', 'Open in Browser'] as const : []),
-        );
+          const url = tunnel.url ?? '(URL unavailable — check Monitor page)';
+          const action = await vscode.window.showInformationMessage(
+            `Cloudflared tunnel active: ${url}`,
+            ...(tunnel.url ? ['Copy Link', 'Open in Browser'] as const : []),
+          );
 
-        if (choice === 'Copy Link' && tunnel.url) {
-          await vscode.env.clipboard.writeText(tunnel.url);
-          vscode.window.showInformationMessage('Link copied to clipboard.');
-        } else if (choice === 'Open in Browser' && tunnel.url) {
-          await vscode.env.openExternal(vscode.Uri.parse(tunnel.url));
+          if (action === 'Copy Link' && tunnel.url) {
+            await vscode.env.clipboard.writeText(tunnel.url);
+            vscode.window.showInformationMessage('Link copied to clipboard.');
+          } else if (action === 'Open in Browser' && tunnel.url) {
+            await vscode.env.openExternal(vscode.Uri.parse(tunnel.url));
+          }
+        } catch (err) {
+          vscode.window.showErrorMessage(
+            `Failed to start cloudflared tunnel: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
-      } catch (err) {
-        vscode.window.showErrorMessage(
-          `Failed to expose port: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    },
-  );
+      },
+    );
+  }
 }

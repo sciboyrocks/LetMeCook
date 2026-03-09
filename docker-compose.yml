@@ -37,6 +37,9 @@ services:
       - LETMECOOK_URL=http://api:3000
       - LETMECOOK_DASHBOARD_URL=${LETMECOOK_DASHBOARD_URL:-http://web:3001}
       - LETMECOOK_API_KEY=${API_KEY:-}
+      - LETMECOOK_DEV_DOMAIN=${LETMECOOK_DEV_DOMAIN}
+    extra_hosts:
+      - "localhost:host-gateway"
     user: "0:0"
     entrypoint: /bin/bash
     command:
@@ -44,6 +47,13 @@ services:
       - |
         chown -R coder:coder /projects
         chown -R coder:coder /home/coder/.local/share/code-server
+        # Make localhost resolve to the Docker host gateway so that host services
+        # (e.g. Redis on port 699) are reachable as localhost:{port} inside the container.
+        GATEWAY=$$(ip route show default | awk '/default/ {print $$3; exit}')
+        if [ -n "$$GATEWAY" ]; then
+          sed -i "s/^127\.0\.0\.1\tlocalhost/$$GATEWAY\tlocalhost/" /etc/hosts
+          sed -i "s/^127\.0\.0\.1 localhost/$$GATEWAY localhost/" /etc/hosts
+        fi
         # Copy built extension into the persistent volume (overwrite stale copies)
         EXT_SRC="/tmp/letmecook-ext-image"
         EXT_DST="/home/coder/.local/share/code-server/extensions/letmecook.letmecook-extension-0.1.0"
@@ -61,7 +71,7 @@ services:
           fi
           usermod -aG "$${DOCKER_GID}" coder
         fi
-        exec su -s /bin/bash coder -c '/usr/bin/entrypoint.sh --bind-addr 0.0.0.0:8080 --auth none --disable-telemetry'
+        exec su -s /bin/bash coder -c '/usr/bin/entrypoint.sh --bind-addr 0.0.0.0:8080 --auth none --disable-telemetry --proxy-domain ${LETMECOOK_DEV_DOMAIN}'
 
   api:
     build:
@@ -104,6 +114,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  port-forward:
+    image: nginx:alpine
+    container_name: letmecook-port-forward
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8889:80"
+    volumes:
+      - ./nginx/port-forward.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - letmecook
+    depends_on:
+      - code-server
 
   web:
     build:

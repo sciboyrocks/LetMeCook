@@ -38,10 +38,23 @@ fastify.server.on('upgrade', (req: http.IncomingMessage, socket: net.Socket, hea
   }
 
   // Forward WS to code-server
+  // Strip the /code/<projectId> prefix so code-server sees a root-relative path.
+  // /code/proxy/* and /code/absproxy/* are code-server's port-forwarding
+  // routes and need to be forwarded as /proxy/* and /absproxy/*.
+  let wsPath = req.url ?? '/';
+  const proxyPortMatch = wsPath.match(/^\/code\/((?:abs)?proxy)\/(.*)/);
+  if (proxyPortMatch) {
+    wsPath = `/${proxyPortMatch[1]}/${proxyPortMatch[2]}`;
+  } else {
+    // /code/<projectId>/rest → /rest
+    wsPath = wsPath.replace(/^\/code\/[^/]+/, '');
+    if (!wsPath) wsPath = '/';
+  }
+
   const proxyReq = http.request({
     hostname: config.codeServerHost,
     port: config.codeServerPort,
-    path: req.url,
+    path: wsPath,
     method: req.method,
     headers: { ...req.headers, host: `${config.codeServerHost}:${config.codeServerPort}` },
   });

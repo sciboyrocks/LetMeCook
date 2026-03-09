@@ -45,7 +45,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
     100,
   );
   exposeItem.text = '$(plug) Expose Port';
-  exposeItem.tooltip = 'LetMeCook: Expose a local port via Cloudflare Tunnel';
+  exposeItem.tooltip = 'LetMeCook: Forward a port to {port}.samrudhraikote.me';
   exposeItem.command = 'letmecook.exposePort';
   exposeItem.show();
   ctx.subscriptions.push(exposeItem);

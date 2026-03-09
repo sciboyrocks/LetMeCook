@@ -31,6 +31,24 @@ function requireAuth(req: FastifyRequest, reply: FastifyReply) {
  * WebSocket upgrade is handled in index.ts via the raw http.Server.
  */
 export async function codeServerProxy(fastify: FastifyInstance) {
+  // code-server's built-in port-forwarding proxy routes (/proxy/<port> and
+  // /absproxy/<port>).  These must be registered before the parametric
+  // /code/:projectId routes so that "/code/proxy/3000" isn't misinterpreted
+  // as projectId="proxy".  Fastify gives static segments priority over
+  // parametric ones at the same tree level, so these will match first.
+  for (const proxyPrefix of ['proxy', 'absproxy']) {
+    fastify.all<{ Params: { '*': string } }>(
+      `/code/${proxyPrefix}/*`,
+      { preHandler: [fastify.requireAuth as typeof requireAuth] },
+      async (req, reply) => {
+        const rest = (req.params as Record<string, string>)['*'] ?? '';
+        const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+        const targetPath = `/${proxyPrefix}/${rest}${qs}`;
+        await proxyRequest(req, reply, targetPath);
+      }
+    );
+  }
+
   fastify.all<{ Params: { projectId: string } }>(
     '/code/:projectId',
     { preHandler: [fastify.requireAuth as typeof requireAuth] },
