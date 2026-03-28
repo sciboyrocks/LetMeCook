@@ -6,7 +6,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
 import { updateProject, deleteProject, updateProjectTags, exportProject, getProjectTasks, updateTask, startBackup, type Project } from "@/lib/api";
 import BackupToast from "@/components/backup-toast";
-import AssignAIAgentModal from "@/components/assign-ai-agent-modal";
 
 const STATUS_LABELS: Record<Project["status"], string> = {
   idea: "Idea",
@@ -126,9 +125,7 @@ interface Props {
   project: Project;
   onUpdated: () => void;
   onDeleted: () => void;
-  activeTunnel?: { id: string; url: string | null; port: number } | null;
   lastBackupAt?: string | null;
-  onKillTunnel?: (tunnelId: string) => void;
 }
 
 function deadlineMeta(targetDate: string | null | undefined) {
@@ -145,7 +142,7 @@ function deadlineMeta(targetDate: string | null | undefined) {
   return { label: `${diffDays}d left`, color: diffDays <= 3 ? "#f97316" : "#38bdf8" };
 }
 
-export default function ProjectCard({ project: p, onUpdated, onDeleted, activeTunnel, lastBackupAt, onKillTunnel }: Props) {
+export default function ProjectCard({ project: p, onUpdated, onDeleted, lastBackupAt }: Props) {
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
   const isDarkTheme = resolvedTheme !== "light";
@@ -159,7 +156,6 @@ export default function ProjectCard({ project: p, onUpdated, onDeleted, activeTu
   const [isDownloading, setIsDownloading] = useState(false);
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [backupJobId, setBackupJobId] = useState<string | null>(null);
-  const [showAIAssign, setShowAIAssign] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const { data: taskRows = [] } = useQuery({
@@ -533,22 +529,6 @@ export default function ProjectCard({ project: p, onUpdated, onDeleted, activeTu
                       </button>
                     </div>
 
-                    {/* Assign to AI Agent */}
-                    <div className="p-1">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setShowActions(false);
-                          setShowAIAssign(true);
-                        }}
-                        className={`${menuItemClass} w-full text-left`}
-                        style={{ color: "#a855f7" }}
-                      >
-                        <span className="text-[10px]">✦</span>
-                        Assign to AI
-                      </button>
-                    </div>
-
                     <div className="h-px" style={{ background: menuDivider }} />
 
                     <div className="p-1">
@@ -655,21 +635,9 @@ export default function ProjectCard({ project: p, onUpdated, onDeleted, activeTu
         {/* Spacer to push footer down */}
         <div className="flex-1" />
 
-        {/* Live badges — tunnel + tasks */}
-        {(activeTunnel || true) && (
+        {/* Quick navigation */}
+        {(
           <div className="mb-3 flex flex-wrap items-center gap-1.5">
-            {activeTunnel && (
-              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ background: "rgba(52,211,153,0.1)", color: "#34d399", border: "1px solid rgba(52,211,153,0.25)" }}>
-                <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: "#34d399" }} />
-                :{activeTunnel.port}
-                {activeTunnel.url && (
-                  <a href={activeTunnel.url} target="_blank" rel="noopener noreferrer" className="underline-offset-2 hover:underline" onClick={(e) => e.stopPropagation()}>tunnel</a>
-                )}
-                {onKillTunnel && (
-                  <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); onKillTunnel(activeTunnel.id); }} className="ml-0.5 text-red-400 hover:text-red-300" title="Kill tunnel">✕</button>
-                )}
-              </span>
-            )}
             <a
               href={`/projects/${p.slug}`}
               className="relative z-10 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-all hover:brightness-110"
@@ -718,7 +686,7 @@ export default function ProjectCard({ project: p, onUpdated, onDeleted, activeTu
               {lastOpened}
             </span>
           )}
-          <span>{p.fileCount.toLocaleString()} files</span>
+          <span>{(p.fileCount ?? 0).toLocaleString()} files</span>
         </div>
       </div>
 
@@ -739,12 +707,6 @@ export default function ProjectCard({ project: p, onUpdated, onDeleted, activeTu
           onClose={() => setBackupJobId(null)}
         />
       )}
-
-      <AssignAIAgentModal
-        open={showAIAssign}
-        project={p}
-        onClose={() => setShowAIAssign(false)}
-      />
 
       {/* Delete confirmation dialog */}
       {showDeleteConfirm && createPortal(

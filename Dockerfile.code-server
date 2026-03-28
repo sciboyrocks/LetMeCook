@@ -39,12 +39,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 # Install Node.js 22
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
+    npm install -g pnpm && \
     rm -rf /var/lib/apt/lists/*
-
-# Install cloudflared
-RUN curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb \
-    && dpkg -i cloudflared.deb \
-    && rm cloudflared.deb
 
 # Create projects dir and Homebrew prefix
 RUN mkdir -p /projects && chown coder:coder /projects \
@@ -53,9 +49,9 @@ RUN mkdir -p /projects && chown coder:coder /projects \
 # Build and install the LetMeCook VS Code extension
 COPY letmecook-extension/ /tmp/letmecook-extension/
 RUN cd /tmp/letmecook-extension \
-    && npm install --ignore-scripts \
+    && pnpm install --ignore-scripts \
     && node esbuild.js \
-    && npx --yes @vscode/vsce package --no-dependencies --allow-missing-repository --skip-license -o /tmp/letmecook.vsix \
+    && pnpm exec vsce package --no-dependencies --allow-missing-repository --skip-license -o /tmp/letmecook.vsix \
     && rm -rf /tmp/letmecook-extension \
     && chown coder:coder /tmp/letmecook.vsix
 

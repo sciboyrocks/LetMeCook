@@ -3,10 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, useCallback } from "react";
-import { getProjects, getFocus, setFocus, getActiveTunnels, getLatestBackups, killTunnel, type Project } from "@/lib/api";
+import { getProjects, getFocus, setFocus, getLatestBackups, type Project } from "@/lib/api";
 import ProjectCard from "@/components/project-card";
 import ActivityHeatmap from "@/components/activity-heatmap";
-import AIUsageWidget from "@/components/ai-usage-widget";
 import PickUpBanner from "@/components/pick-up-banner";
 import WeeklyWrappedBanner from "@/components/weekly-wrapped-banner";
 import { useSearch } from "@/components/search-context";
@@ -76,16 +75,6 @@ export default function DashboardPage() {
 
   const allProjects = data ?? [];
 
-  // ── Active Tunnels + Latest Backups ───────────────────────────────────
-  const { data: activeTunnels = [] } = useQuery({
-    queryKey: ["active-tunnels"],
-    queryFn: async () => {
-      const res = await getActiveTunnels();
-      return res.ok ? res.data : [];
-    },
-    refetchInterval: 10000,
-  });
-
   const { data: latestBackups = {} } = useQuery({
     queryKey: ["latest-backups"],
     queryFn: async () => {
@@ -93,19 +82,6 @@ export default function DashboardPage() {
       return res.ok ? res.data : {};
     },
   });
-
-  const tunnelByProject = new Map<string, { id: string; url: string | null; port: number }>();
-  for (const t of activeTunnels) {
-    if (t.projectId) {
-      tunnelByProject.set(t.projectId, { id: t.id, url: t.url, port: t.port });
-    }
-  }
-
-  const handleKillTunnel = (tunnelId: string) => {
-    killTunnel(tunnelId).then(() => {
-      queryClient.invalidateQueries({ queryKey: ["active-tunnels"] });
-    });
-  };
 
   const byFilter = allProjects.filter((p) => {
     if (filter === "pinned") return p.pinned;
@@ -285,7 +261,7 @@ export default function DashboardPage() {
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {pinned.map((p) => (
-              <ProjectCard key={p.id} project={p} onUpdated={invalidate} onDeleted={invalidate} activeTunnel={tunnelByProject.get(p.id)} lastBackupAt={latestBackups[p.id]} onKillTunnel={handleKillTunnel} />
+              <ProjectCard key={p.id} project={p} onUpdated={invalidate} onDeleted={invalidate} lastBackupAt={latestBackups[p.id]} />
             ))}
           </div>
         </section>
@@ -304,7 +280,7 @@ export default function DashboardPage() {
           )}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {rest.map((p) => (
-              <ProjectCard key={p.id} project={p} onUpdated={invalidate} onDeleted={invalidate} activeTunnel={tunnelByProject.get(p.id)} lastBackupAt={latestBackups[p.id]} onKillTunnel={handleKillTunnel} />
+              <ProjectCard key={p.id} project={p} onUpdated={invalidate} onDeleted={invalidate} lastBackupAt={latestBackups[p.id]} />
             ))}
           </div>
         </section>
@@ -315,7 +291,6 @@ export default function DashboardPage() {
         <div className="mt-10 space-y-5">
           <WeeklyWrappedBanner />
           <ActivityHeatmap />
-          <AIUsageWidget />
         </div>
       )}
     </>

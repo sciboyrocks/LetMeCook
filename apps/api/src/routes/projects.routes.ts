@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { mkdirSync, existsSync, readdirSync, writeFileSync, mkdirSync as mkdir, rmSync } from 'node:fs';
+import { mkdirSync, existsSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db/index.js';
 import { config } from '../config.js';
@@ -9,17 +9,114 @@ import { slugify } from '../lib/slugify.js';
 import { enqueueJob } from '../lib/jobs.js';
 import { cacheGet, cacheSet, cacheDel } from '../lib/redis.js';
 
+const FILE_COUNT_IGNORED_DIRS = new Set([
+  '.git',
+  'node_modules',
+  '.next',
+  '.turbo',
+  'dist',
+  'build',
+  'coverage',
+]);
+
 function countFiles(dir: string): number {
   if (!existsSync(dir)) return 0;
   let count = 0;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name.startsWith('.node_modules')) continue;
+    if (FILE_COUNT_IGNORED_DIRS.has(entry.name)) continue;
     if (entry.isFile()) count++;
     else if (entry.isDirectory() && !entry.name.startsWith('.')) {
       count += countFiles(join(dir, entry.name));
     }
   }
   return count;
+}
+
+const PROJECT_DISCOVERY_TTL_MS = 60_000;
+const FILE_COUNT_TTL_MS = 5 * 60_000;
+const FILE_COUNT_WARMUP_BATCH_SIZE = 2;
+let lastProjectDiscoveryAt = 0;
+const fileCountCache = new Map<string, { value: number; expiresAt: number }>();
+let fileCountWarmupInFlight = false;
+
+function getFileCountCached(projectSlugOrId: string): number {
+  const now = Date.now();
+  const cached = fileCountCache.get(projectSlugOrId);
+  if (cached && cached.expiresAt > now) return cached.value;
+
+  const value = countFiles(join(config.projectsDir, projectSlugOrId));
+  fileCountCache.set(projectSlugOrId, { value, expiresAt: now + FILE_COUNT_TTL_MS });
+  return value;
+}
+
+function maybeDiscoverProjectsFromDisk() {
+  const now = Date.now();
+  if (now - lastProjectDiscoveryAt < PROJECT_DISCOVERY_TTL_MS) return;
+  lastProjectDiscoveryAt = now;
+
+  try {
+    const entries = readdirSync(config.projectsDir, { withFileTypes: true });
+    const knownSlugs = new Set(
+      db.prepare<[], { slug: string }>('SELECT slug FROM projects').all().map((r) => r.slug)
+    );
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || knownSlugs.has(entry.name)) continue;
+      const displayName = entry.name
+        .replace(/[-_]+/g, ' ')
+        .replace(/\.\w+$/, '')
+        .replace(/\b\w/g, (c) => c.toUpperCase())
+        .trim() || entry.name;
+
+      db.prepare('INSERT INTO projects (id, name, slug, description, color) VALUES (?, ?, ?, ?, ?)').run(
+        uuidv4(), displayName, entry.name, '', '#6366f1'
+      );
+    }
+  } catch {}
+}
+
+function warmFileCountCache(projects: Array<Record<string, unknown>>) {
+  if (fileCountWarmupInFlight) return;
+  fileCountWarmupInFlight = true;
+
+  const queue = projects.map((p) => (p.slug ?? p.id) as string);
+
+  const processBatch = () => {
+    const now = Date.now();
+    let hasMore = false;
+    try {
+      for (let i = 0; i < FILE_COUNT_WARMUP_BATCH_SIZE; i++) {
+        const key = queue.shift();
+        if (!key) break;
+
+        const cached = fileCountCache.get(key);
+        if (cached && cached.expiresAt > now) continue;
+
+        const value = countFiles(join(config.projectsDir, key));
+        fileCountCache.set(key, { value, expiresAt: now + FILE_COUNT_TTL_MS });
+      }
+
+      hasMore = queue.length > 0;
+      if (hasMore) {
+        setImmediate(processBatch);
+        return;
+      }
+    } finally {
+      if (!hasMore) fileCountWarmupInFlight = false;
+    }
+  };
+
+  setImmediate(processBatch);
+}
+
+function chownProjectDirAsync(projectDir: string) {
+  // Avoid blocking request latency with sync chown operations.
+  if (typeof process.getuid === 'function' && process.getuid() !== 0) return;
+  const child = spawn('chown', ['-R', '1000:1000', projectDir], {
+    stdio: 'ignore',
+    detached: true,
+  });
+  child.unref();
 }
 
 function uniqueSlug(slug: string, excludeId?: string): string {
@@ -47,29 +144,14 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     const cached = await cacheGet(PROJECTS_CACHE_KEY);
     if (cached) return reply.send({ ok: true, data: cached });
 
-    // Auto-discover folders on disk not yet registered
-    try {
-      const entries = readdirSync(config.projectsDir, { withFileTypes: true });
-      const knownSlugs = new Set(
-        db.prepare<[], { slug: string }>('SELECT slug FROM projects').all().map((r) => r.slug)
-      );
-      for (const entry of entries) {
-        if (!entry.isDirectory() || knownSlugs.has(entry.name)) continue;
-        const displayName = entry.name
-          .replace(/[-_]+/g, ' ')
-          .replace(/\.\w+$/, '')
-          .replace(/\b\w/g, (c) => c.toUpperCase())
-          .trim() || entry.name;
-        db.prepare('INSERT INTO projects (id, name, slug, description, color) VALUES (?, ?, ?, ?, ?)').run(
-          uuidv4(), displayName, entry.name, '', '#6366f1'
-        );
-      }
-    } catch {}
+    // Auto-discovery is throttled to avoid expensive disk scans on every list request.
+    maybeDiscoverProjectsFromDisk();
 
     const projects = db.prepare('SELECT * FROM projects ORDER BY pinned DESC, last_opened_at DESC, updated_at DESC').all();
+    warmFileCountCache(projects as Array<Record<string, unknown>>);
     const enriched = (projects as Array<Record<string, unknown>>).map((p) => ({
       ...p,
-      fileCount: countFiles(join(config.projectsDir, (p.slug ?? p.id) as string)),
+      fileCount: fileCountCache.get((p.slug ?? p.id) as string)?.value ?? 0,
     }));
 
     await cacheSet(PROJECTS_CACHE_KEY, enriched, 30); // 30s cache
@@ -93,16 +175,9 @@ export async function projectsRoutes(fastify: FastifyInstance) {
       const slug = uniqueSlug(slugify(name));
       const projectDir = join(config.projectsDir, slug);
       mkdirSync(projectDir, { recursive: true });
-      spawnSync('chown', ['-R', '1000:1000', projectDir]);
+      chownProjectDirAsync(projectDir);
 
       writeFileSync(join(projectDir, 'README.md'), `# ${name.trim()}\n\n${description ?? ''}\n`);
-
-      const cfDir = join(projectDir, '.cloudflared');
-      mkdir(cfDir, { recursive: true });
-      writeFileSync(
-        join(cfDir, 'config.yml'),
-        `# Cloudflare Tunnel configuration for project: ${name.trim()}\ntunnel: <YOUR_TUNNEL_ID>\ncredentials-file: /home/coder/.cloudflared/<YOUR_TUNNEL_ID>.json\n\ningress:\n  - hostname: ${slug}.${config.domain}\n    service: http://localhost:3000\n  - service: http_status:404\n`
-      );
 
       db.prepare(
         'INSERT INTO projects (id, name, slug, description, color, milestone_name, target_date) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -117,6 +192,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
       );
 
       const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+      fileCountCache.set(slug, { value: 1, expiresAt: Date.now() + FILE_COUNT_TTL_MS });
       await cacheDel(PROJECTS_CACHE_KEY);
       return reply.status(201).send({ ok: true, data: project });
     }
@@ -167,7 +243,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
         ok: true,
         data: {
           ...project,
-          fileCount: countFiles(join(config.projectsDir, (project.slug ?? project.id) as string)),
+          fileCount: getFileCountCached((project.slug ?? project.id) as string),
         },
       });
     }
@@ -186,6 +262,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
       if (existsSync(projectDir)) rmSync(projectDir, { recursive: true, force: true });
 
       db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+      fileCountCache.delete((existing.slug ?? id) as string);
       await cacheDel(PROJECTS_CACHE_KEY);
       return reply.send({ ok: true, data: { success: true } });
     }

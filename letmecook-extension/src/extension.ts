@@ -1,9 +1,6 @@
 import * as vscode from 'vscode';
 import { openDashboard } from './commands/dashboard.js';
-import { exposePort } from './commands/exposePort.js';
 import { cloneRepo } from './commands/clone.js';
-import { commitPush } from './commands/commitPush.js';
-import { askAI, generateTasksFromSelection, explainError, generateCommitMessage } from './commands/ai.js';
 import { openTasksPanel } from './providers/tasksWebviewPanel.js';
 import { LetMeCookTreeProvider, TaskItem } from './providers/tasksProvider.js';
 import { startHeartbeat } from './heartbeat.js';
@@ -39,17 +36,6 @@ export function activate(ctx: vscode.ExtensionContext): void {
   dashboardItem.show();
   ctx.subscriptions.push(dashboardItem);
 
-  // ⚡ Expose Port
-  const exposeItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Right,
-    100,
-  );
-  exposeItem.text = '$(plug) Expose Port';
-  exposeItem.tooltip = 'LetMeCook: Forward a port to {port}.samrudhraikote.me';
-  exposeItem.command = 'letmecook.exposePort';
-  exposeItem.show();
-  ctx.subscriptions.push(exposeItem);
-
   // 📋 Tasks
   const tasksItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
@@ -65,13 +51,9 @@ export function activate(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push(
     vscode.commands.registerCommand('letmecook.openDashboard', openDashboard),
 
-    vscode.commands.registerCommand('letmecook.exposePort', exposePort),
-
     vscode.commands.registerCommand('letmecook.openTasks', () => openTasksPanel(ctx)),
 
     vscode.commands.registerCommand('letmecook.cloneRepo', cloneRepo),
-
-    vscode.commands.registerCommand('letmecook.commitPush', commitPush),
 
     vscode.commands.registerCommand('letmecook.refreshTasks', () => treeProvider.refresh()),
 
@@ -110,12 +92,6 @@ export function activate(ctx: vscode.ExtensionContext): void {
         );
       }
     }),
-
-    // ── AI Commands (Phase 8.12) ────────────────────────────────────────────
-    vscode.commands.registerCommand('letmecook.askAI', askAI),
-    vscode.commands.registerCommand('letmecook.generateTasksFromSelection', generateTasksFromSelection),
-    vscode.commands.registerCommand('letmecook.explainError', explainError),
-    vscode.commands.registerCommand('letmecook.generateCommitMessage', generateCommitMessage),
   );
 
   // ── Heartbeat ────────────────────────────────────────────────────────────

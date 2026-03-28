@@ -5,14 +5,13 @@ import { db } from '../db/index.js';
 
 export const JOB_QUEUE_NAME = 'letmecook';
 
-export type JobType = 'clone' | 'scaffold' | 'export-zip' | 'backup' | 'ai-agent';
+export type JobType = 'clone' | 'scaffold' | 'export-zip' | 'backup';
 
 export const JOB_TIMEOUTS_MS: Record<JobType, number> = {
   clone: 5 * 60_000,
   scaffold: 8 * 60_000,
   'export-zip': 3 * 60_000,
   backup: 10 * 60_000,
-  'ai-agent': 15 * 60_000,
 };
 
 export interface CloneJobPayload {
@@ -39,18 +38,11 @@ export interface BackupJobPayload {
   projectSlug: string;
 }
 
-export interface AIAgentJobPayload {
-  projectId: string;
-  projectSlug: string;
-  instruction: string;
-}
-
 export type JobPayloadMap = {
   clone: CloneJobPayload;
   scaffold: ScaffoldJobPayload;
   'export-zip': ExportZipJobPayload;
   backup: BackupJobPayload;
-  'ai-agent': AIAgentJobPayload;
 };
 
 const connection = { url: config.redisUrl };

@@ -10,9 +10,6 @@ import { config } from './config.js';
 import { db } from './db/index.js';
 import { slugify } from './lib/slugify.js';
 import { JOB_QUEUE_NAME, type JobType, type JobPayloadMap } from './lib/jobs.js';
-import { aiRun } from './lib/ai/adapter.js';
-import { buildProjectContext } from './lib/ai/context.js';
-import { getFlag } from './lib/flags.js';
 import { redis, publishJobUpdate, closeRedis } from './lib/redis.js';
 
 const connection = { url: config.redisUrl };
@@ -594,177 +591,6 @@ async function processBackup(jobId: string, payload: JobPayloadMap['backup']) {
   return { backupId, filename, sizeBytes, driveFileId, projectId: project.id, slug: project.slug };
 }
 
-async function processAIAgent(jobId: string, payload: JobPayloadMap['ai-agent']) {
-  if (!getFlag(db, 'ai')) {
-    throw new Error('AI feature is disabled. Enable it in Connections → AI Providers.');
-  }
-
-  const { projectId, projectSlug, instruction } = payload;
-
-  if (!instruction?.trim()) throw new Error('Instruction is required');
-
-  const project = db
-    .prepare<[string], { id: string; slug: string; name: string }>('SELECT id, slug, name FROM projects WHERE id = ?')
-    .get(projectId);
-  if (!project) throw new Error('Project not found');
-
-  updateJob(jobId, { progress: 5 });
-  appendLog(jobId, 'info', `Starting AI agent for project: ${project.name}`);
-  appendLog(jobId, 'info', `Instruction: ${instruction.trim()}`);
-
-  // Build project context
-  updateJob(jobId, { progress: 10 });
-  appendLog(jobId, 'info', 'Gathering project context (tasks, git status, file tree)…');
-  const ctx = buildProjectContext(projectSlug);
-
-  const contextParts: string[] = [
-    `Project: ${project.name} (${projectSlug})`,
-  ];
-  if (ctx) {
-    if (ctx.project.description) contextParts.push(`Description: ${ctx.project.description}`);
-    if (ctx.project.tags.length) contextParts.push(`Tags: ${ctx.project.tags.join(', ')}`);
-    if (ctx.tasks.length) {
-      contextParts.push('\nOpen tasks:');
-      for (const t of ctx.tasks) {
-        contextParts.push(`  [${t.status}] (P${t.priority}) ${t.title}`);
-      }
-    }
-    if (ctx.gitStatus) contextParts.push(`\nGit status:\n${ctx.gitStatus}`);
-    if (ctx.recentCommits) contextParts.push(`\nRecent commits:\n${ctx.recentCommits}`);
-    if (ctx.fileTree) contextParts.push(`\nFile tree (excerpt):\n${ctx.fileTree}`);
-    if (ctx.fileSnippets.length) {
-      contextParts.push('\nKey file snippets:');
-      for (const s of ctx.fileSnippets) {
-        contextParts.push(`\n--- ${s.path} ---\n${s.content}`);
-      }
-    }
-  }
-  const contextStr = contextParts.join('\n');
-  appendLog(jobId, 'info', `Context built (${contextStr.length} chars). Invoking AI agent…`);
-
-  updateJob(jobId, { progress: 20 });
-
-  // Phase 1: Analyse & plan
-  appendLog(jobId, 'info', '── Phase 1: Analysing task and forming a plan ──');
-  let planResult: { text: string; runId: string };
-  try {
-    planResult = await aiRun({
-      action: 'ai-agent-plan',
-      projectId,
-      systemPrompt: `You are a senior software engineer acting as an autonomous coding agent. You have access to the project context below. The user has assigned you a task. 
-
-Respond with a concise, numbered action plan (max 8 steps) of what you will do to complete the task. Each step on its own line starting with a number and period. Be specific and technical. No preamble.`,
-      userPrompt: `Project context:\n${contextStr}\n\nAssigned task: ${instruction.trim()}`,
-      maxTokens: 1024,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    appendLog(jobId, 'error', `AI plan failed: ${msg}`);
-    throw err;
-  }
-
-  const planSteps = planResult.text
-    .split('\n')
-    .map((l) => l.replace(/^\d+\.\s*/, '').trim())
-    .filter((l) => l.length > 0);
-
-  for (const step of planSteps) {
-    appendLog(jobId, 'info', `  → ${step}`);
-  }
-
-  updateJob(jobId, { progress: 35 });
-
-  // Phase 2: Execute each step with AI reasoning
-  appendLog(jobId, 'info', '\n── Phase 2: Executing plan ──');
-  const stepResults: string[] = [];
-  const totalSteps = planSteps.length;
-
-  for (let i = 0; i < planSteps.length; i++) {
-    if (isCancelRequested(jobId)) throw new JobCancelledError();
-
-    const step = planSteps[i];
-    const stepNum = i + 1;
-    const progressStart = 35 + Math.floor((i / totalSteps) * 45);
-    updateJob(jobId, { progress: progressStart });
-    appendLog(jobId, 'info', `\n[Step ${stepNum}/${totalSteps}] ${step}`);
-
-    let stepResult: { text: string };
-    try {
-      stepResult = await aiRun({
-        action: 'ai-agent-step',
-        projectId,
-        systemPrompt: `You are executing step ${stepNum} of ${totalSteps} in a coding task for project "${project.name}".
-
-Full plan:
-${planSteps.map((s, idx) => `${idx + 1}. ${s}`).join('\n')}
-
-Project context:
-${contextStr}
-
-Previous step results:
-${stepResults.length > 0 ? stepResults.map((r, idx) => `Step ${idx + 1}: ${r}`).join('\n') : 'None yet'}
-
-Current step: ${step}
-
-Execute this step. Be concise and specific. If this step involves writing code, provide the actual code. If it involves analysis, provide the analysis. Output only what is relevant to this step.`,
-        userPrompt: `Execute step ${stepNum}: ${step}`,
-        maxTokens: 2048,
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      appendLog(jobId, 'warn', `Step ${stepNum} encountered an issue: ${msg}`);
-      stepResults.push(`(failed: ${msg})`);
-      continue;
-    }
-
-    const resultSnippet = stepResult.text.trim();
-    stepResults.push(resultSnippet.slice(0, 500));
-
-    // Stream the result line by line
-    for (const line of resultSnippet.split('\n').slice(0, 30)) {
-      if (line.trim()) appendLog(jobId, 'info', line);
-    }
-    if (resultSnippet.split('\n').length > 30) {
-      appendLog(jobId, 'info', '  … (truncated for log)');
-    }
-  }
-
-  updateJob(jobId, { progress: 85 });
-
-  // Phase 3: Summary
-  appendLog(jobId, 'info', '\n── Phase 3: Generating summary ──');
-  if (isCancelRequested(jobId)) throw new JobCancelledError();
-
-  let summaryResult: { text: string };
-  try {
-    summaryResult = await aiRun({
-      action: 'ai-agent-summary',
-      projectId,
-      systemPrompt: `You are summarising the result of an autonomous coding agent run. Be concise (max 4 sentences). State what was accomplished, any code that was produced, and any follow-up actions the developer should take.`,
-      userPrompt: `Task: ${instruction.trim()}\n\nPlan:\n${planSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n\nStep results:\n${stepResults.map((r, i) => `Step ${i + 1}: ${r}`).join('\n\n')}`,
-      maxTokens: 512,
-    });
-  } catch {
-    summaryResult = { text: 'Agent completed all steps. Review the log above for details.' };
-  }
-
-  updateJob(jobId, { progress: 95 });
-  appendLog(jobId, 'info', '\n── Summary ──');
-  for (const line of summaryResult.text.trim().split('\n')) {
-    if (line.trim()) appendLog(jobId, 'info', line);
-  }
-
-  updateJob(jobId, { progress: 100 });
-
-  return {
-    projectId,
-    projectSlug,
-    instruction: instruction.trim(),
-    planSteps,
-    summary: summaryResult.text.trim(),
-  };
-}
-
 async function processJob(job: Job) {
   const jobId = String(job.id);
   const type = job.name as JobType;
@@ -788,8 +614,6 @@ async function processJob(job: Job) {
       result = await processExportZip(jobId, job.data as JobPayloadMap['export-zip']);
     } else if (type === 'backup') {
       result = await processBackup(jobId, job.data as JobPayloadMap['backup']);
-    } else if (type === 'ai-agent') {
-      result = await processAIAgent(jobId, job.data as JobPayloadMap['ai-agent']);
     } else {
       throw new Error(`Unknown job type: ${type}`);
     }

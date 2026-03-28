@@ -2,7 +2,16 @@
   "name": "@letmecook/web",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^9.15.0",
+      "onFail": "error"
+    }
+  },
   "scripts": {
+    "preinstall": "node -e \"if(!process.env.npm_execpath||!process.env.npm_execpath.includes('pnpm')){console.error('This workspace uses pnpm. Run: pnpm install (from repo root)');process.exit(1)}\"",
     "dev": "next dev --port 3001",
     "build": "next build && cp -r public .next/standalone/apps/web/public && cp -r .next/static .next/standalone/apps/web/.next/static",
     "start": "PORT=3001 node --disable-warning=DEP0060 .next/standalone/apps/web/server.js",

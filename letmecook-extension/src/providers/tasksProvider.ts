@@ -150,12 +150,7 @@ export class LetMeCookTreeProvider implements vscode.TreeDataProvider<AnyItem> {
     if (element instanceof SectionItem && element.sectionId === 'links') {
       return [
         new LinkItem('Open Dashboard', 'dashboard', 'letmecook.openDashboard'),
-        new LinkItem('Ask AI', 'sparkle', 'letmecook.askAI'),
-        new LinkItem('Generate AI Commit Message', 'git-commit', 'letmecook.generateCommitMessage'),
-        new LinkItem('Explain Current Error', 'bug', 'letmecook.explainError'),
-        new LinkItem('Expose Port', 'plug', 'letmecook.exposePort'),
         new LinkItem('Open Tasks Panel', 'checklist', 'letmecook.openTasks'),
-        new LinkItem('Commit & Push', 'cloud-upload', 'letmecook.commitPush'),
       ];
     }
 

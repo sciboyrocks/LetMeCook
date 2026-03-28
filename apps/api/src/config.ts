@@ -16,15 +16,6 @@ const schema = z.object({
   GDRIVE_OAUTH_CLIENT_ID: z.string().optional(),
   GDRIVE_OAUTH_CLIENT_SECRET: z.string().optional(),
   GDRIVE_OAUTH_REFRESH_TOKEN: z.string().optional(),
-  // AI Provider — API keys (all optional; which one is used depends on the active provider setting)
-  GEMINI_API_KEY: z.string().optional(),
-  GEMINI_MODEL: z.string().optional(),
-  GEMINI_CLI_BIN: z.string().optional(),
-  OPENAI_API_KEY: z.string().optional(),
-  OPENAI_MODEL: z.string().optional(),
-  OPENAI_BASE_URL: z.string().optional(),
-  ANTHROPIC_API_KEY: z.string().optional(),
-  ANTHROPIC_MODEL: z.string().optional(),
 });
 
 const result = schema.safeParse(process.env);
@@ -54,7 +45,5 @@ export const config = {
   gdriveOAuthClientId: data.GDRIVE_OAUTH_CLIENT_ID ?? null,
   gdriveOAuthClientSecret: data.GDRIVE_OAUTH_CLIENT_SECRET ?? null,
   gdriveOAuthRefreshToken: data.GDRIVE_OAUTH_REFRESH_TOKEN ?? null,
-  // AI provider env vars are read directly by each provider class (process.env)
-  // so they're listed in config only for reference / startup documentation.
   isProd: data.NODE_ENV === 'production',
 } as const;

@@ -3,7 +3,16 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^9.15.0",
+      "onFail": "error"
+    }
+  },
   "scripts": {
+    "preinstall": "node -e \"if(!process.env.npm_execpath||!process.env.npm_execpath.includes('pnpm')){console.error('This workspace uses pnpm. Run: pnpm install (from repo root)');process.exit(1)}\"",
     "dev": "sh -c 'tsx watch --env-file .env src/worker.ts & tsx watch --env-file .env src/index.ts'",
     "build": "tsc",
     "typecheck": "tsc --noEmit",

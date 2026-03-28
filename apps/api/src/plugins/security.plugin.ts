@@ -8,6 +8,9 @@ import { redis } from '../lib/redis.js';
 
 async function securityPlugin(fastify: FastifyInstance) {
   await fastify.register(fastifyHelmet, {
+    strictTransportSecurity: config.isProd
+      ? { maxAge: 15552000, includeSubDomains: true, preload: true }
+      : false,
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
@@ -32,13 +35,16 @@ async function securityPlugin(fastify: FastifyInstance) {
   await fastify.register(fastifyCors, {
     origin: config.isProd ? [`https://${config.domain}`] : true,
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'X-API-Key'],
   });
 
   await fastify.register(fastifyRateLimit, {
     global: true,
-    max: 300,
+    max: 2000,
     timeWindow: '15 minutes',
     redis,
+    skipOnError: true,
     keyGenerator: (req) => {
       const ip = req.ip ?? '0.0.0.0';
       return ip.startsWith('::ffff:') ? ip.slice(7) : ip;

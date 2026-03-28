@@ -1,10 +1,18 @@
 {
   "name": "letmecook-extension",
   "displayName": "LetMeCook",
-  "description": "LetMeCook developer OS — dashboard, tasks, port exposure, and activity tracking inside VS Code.",
+  "description": "LetMeCook developer OS — dashboard, tasks, and activity tracking inside VS Code.",
   "version": "0.1.0",
   "publisher": "letmecook",
   "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^9.15.0",
+      "onFail": "error"
+    }
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -39,11 +47,6 @@
         "icon": "$(home)"
       },
       {
-        "command": "letmecook.exposePort",
-        "title": "LetMeCook: Expose Port",
-        "icon": "$(plug)"
-      },
-      {
         "command": "letmecook.openTasks",
         "title": "LetMeCook: Open Tasks",
         "icon": "$(tasklist)"
@@ -52,11 +55,6 @@
         "command": "letmecook.cloneRepo",
         "title": "LetMeCook: Clone a Repo into New Project",
         "icon": "$(repo-clone)"
-      },
-      {
-        "command": "letmecook.commitPush",
-        "title": "LetMeCook: Commit & Push Everything",
-        "icon": "$(cloud-upload)"
       },
       {
         "command": "letmecook.refreshTasks",
@@ -72,26 +70,6 @@
         "command": "letmecook.completeTask",
         "title": "Complete Task",
         "icon": "$(check)"
-      },
-      {
-        "command": "letmecook.askAI",
-        "title": "LetMeCook: Ask AI About This Project",
-        "icon": "$(sparkle)"
-      },
-      {
-        "command": "letmecook.generateTasksFromSelection",
-        "title": "LetMeCook: Generate Tasks from Selection",
-        "icon": "$(list-unordered)"
-      },
-      {
-        "command": "letmecook.explainError",
-        "title": "LetMeCook: Explain Current Error",
-        "icon": "$(bug)"
-      },
-      {
-        "command": "letmecook.generateCommitMessage",
-        "title": "LetMeCook: Generate AI Commit Message",
-        "icon": "$(git-commit)"
       }
     ],
     "viewsContainers": {
@@ -132,29 +110,11 @@
           "when": "view == letmecookPanel && viewItem == task",
           "group": "inline"
         }
-      ],
-      "editor/context": [
-        {
-          "command": "letmecook.askAI",
-          "group": "letmecook@1"
-        },
-        {
-          "command": "letmecook.generateTasksFromSelection",
-          "when": "editorHasSelection",
-          "group": "letmecook@2"
-        },
-        {
-          "command": "letmecook.explainError",
-          "group": "letmecook@3"
-        },
-        {
-          "command": "letmecook.generateCommitMessage",
-          "group": "letmecook@4"
-        }
       ]
     }
   },
   "scripts": {
+    "preinstall": "node -e \"if(!process.env.npm_execpath||!process.env.npm_execpath.includes('pnpm')){console.error('This workspace uses pnpm. Run: pnpm install (from repo root)');process.exit(1)}\"",
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "npm run build && npx @vscode/vsce package --no-dependencies --allow-missing-repository --skip-license"

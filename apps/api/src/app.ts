@@ -11,9 +11,7 @@ import { jobsRoutes } from './routes/jobs.routes.js';
 import { tasksRoutes } from './routes/tasks.routes.js';
 import { activityRoutes } from './routes/activity.routes.js';
 import { journalRoutes } from './routes/journal.routes.js';
-import { tunnelsRoutes } from './routes/tunnels.routes.js';
 import { backupsRoutes } from './routes/backups.routes.js';
-import { aiRoutes } from './routes/ai.routes.js';
 import { codeServerProxy } from './proxy/code-server.js';
 import { config } from './config.js';
 import { startAuditFlusher, stopAuditFlusher, flushAuditLogs } from './lib/audit.js';
@@ -52,9 +50,7 @@ export async function buildApp() {
   await fastify.register(tasksRoutes);
   await fastify.register(activityRoutes);
   await fastify.register(journalRoutes);
-  await fastify.register(tunnelsRoutes);
   await fastify.register(backupsRoutes);
-  await fastify.register(aiRoutes);
   await fastify.register(jobsRoutes);
   await fastify.register(codeServerProxy);
 

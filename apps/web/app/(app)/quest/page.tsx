@@ -9,7 +9,7 @@ const TYPE_META: Record<string, { label: string; color: string; icon: string }> 
   scaffold:     { label: "Scaffold",   color: "#8b5cf6", icon: "🏗" },
   "export-zip": { label: "Export",     color: "#f59e0b", icon: "📦" },
   backup:       { label: "Backup",     color: "#22c55e", icon: "☁" },
-  "ai-agent":   { label: "AI Agent",   color: "#a855f7", icon: "✦" },
+  "ai-agent":   { label: "Automation", color: "#a855f7", icon: "⚙" },
 };
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {

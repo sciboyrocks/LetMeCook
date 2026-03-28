@@ -13,7 +13,6 @@ import {
   type Task,
 } from "@/lib/api";
 import ProjectTimeChart from "@/components/project-time-chart";
-import AIProjectPanel from "@/components/ai-project-panel";
 
 const COLUMNS: Array<{ key: Task["status"]; label: string }> = [
   { key: "todo", label: "To Do" },
@@ -414,9 +413,6 @@ export default function ProjectDetailPage() {
           </div>
         </div>
       </div>
-
-      {/* ── AI Panel ── */}
-      <AIProjectPanel slug={slug} projectColor={color} />
 
       {/* ── Time chart ── */}
       <div className="mt-5">

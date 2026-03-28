@@ -321,6 +321,7 @@ export async function exportProject(idOrSlug: string, filename: string): Promise
   if (!enqueue.ok) throw new Error(enqueue.error.message || "Failed to queue export job");
 
   const startedAt = Date.now();
+  let pollDelayMs = 800;
   let state: JobSnapshot | null = null;
 
   while (Date.now() - startedAt < 5 * 60_000) {
@@ -333,7 +334,8 @@ export async function exportProject(idOrSlug: string, filename: string): Promise
       throw new Error(state.error?.message || `Export ${state.status}`);
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, pollDelayMs));
+    pollDelayMs = Math.min(2500, pollDelayMs + 300);
   }
 
   if (!state || state.status !== "completed") {
@@ -461,35 +463,6 @@ export async function uploadJournalImages(entryId: string, files: File[]): Promi
 export const deleteJournalImage = (imageId: string) =>
   request<{ success: boolean }>(`/journal/images/${imageId}`, { method: "DELETE" });
 
-// ── Tunnels ──────────────────────────────────────────────────────────────────
-export interface Tunnel {
-  id: string;
-  projectId: string | null;
-  port: number;
-  url: string | null;
-  pid: number | null;
-  status: "starting" | "active" | "stopped" | "error";
-  errorMsg: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export const exposeTunnel = (port: number, projectId?: string) =>
-  request<Tunnel>("/tunnels/expose", {
-    method: "POST",
-    body: JSON.stringify({ port, projectId }),
-  });
-
-export const getTunnels = () => request<Tunnel[]>("/tunnels");
-
-export const getActiveTunnels = () => request<Tunnel[]>("/tunnels/active");
-
-export const killTunnel = (id: string) =>
-  request<{ id: string; status: string }>(`/tunnels/${id}`, { method: "DELETE" });
-
-export const getTunnelLogs = (id: string) =>
-  request<{ lines: string[] }>(`/tunnels/${id}/logs`);
-
 // ── System Stats ─────────────────────────────────────────────────────────────
 export interface SystemStats {
   cpu_percent: number;
@@ -532,15 +505,6 @@ export const startBackup = (slug: string) =>
   request<EnqueuedJob>(`/projects/${encodeURIComponent(slug)}/backup`, {
     method: "POST",
   });
-
-export const assignToAIAgent = (slug: string, instruction: string) =>
-  request<EnqueuedJob>(`/projects/${encodeURIComponent(slug)}/ai-agent`, {
-    method: "POST",
-    body: JSON.stringify({ instruction }),
-  });
-
-export const getActiveAIAgentJobs = () =>
-  request<JobSnapshot[]>("/jobs?type=ai-agent&status=queued,running");
 
 export const getWorkerLogs = () =>
   request<JobSnapshot[]>("/jobs?limit=20");
@@ -590,114 +554,3 @@ export const addQuickLink = (title: string, url: string, faviconUrl?: string) =>
 
 export const deleteQuickLink = (id: string) =>
   request<QuickLink[]>(`/quick-links/${encodeURIComponent(id)}`, { method: "DELETE" });
-
-// ── AI ────────────────────────────────────────────────────────────────────────
-export interface AIProviderInfo {
-  id: string;
-  name: string;
-  type: "cli" | "api";
-  active: boolean;
-  availability?: {
-    ok: boolean;
-    detail?: string;
-  };
-}
-export interface AIUsageStats {
-  today: { calls: number; errors: number; avgLatencyMs: number; cap: number; remaining: number };
-  week: { calls: number; errors: number };
-}
-export interface AIPlanResult {
-  tasks: string[];
-  saved: { id: string; title: string }[];
-  runId: string;
-  providerId: string;
-}
-export interface AINextTaskResult { suggestion: string; runId: string; providerId: string; }
-export interface AIAskResult { answer: string; runId: string; providerId: string; }
-export interface AIBootstrapPlan {
-  summary?: string;
-  techStack?: string[];
-  tasks?: string[];
-  milestone?: string;
-  milestoneDate?: string;
-  readmeOutline?: string;
-  raw?: string;
-}
-export interface AIBootstrapResult {
-  plan: AIBootstrapPlan | null;
-  savedTasks: { id: string; title: string }[];
-  runId: string;
-  providerId: string;
-}
-export interface AIRecapResult {
-  saved: boolean;
-  entryId?: string;
-  draft: string;
-  runId: string;
-  providerId: string;
-}
-export interface AICommitResult { messages: string[]; runId: string; providerId: string; }
-
-export const getAIProviders = () => request<AIProviderInfo[]>("/ai/providers");
-export const setAIProvider = (providerId: string) =>
-  request<{ activeProviderId: string }>("/ai/providers/active", {
-    method: "PUT",
-    body: JSON.stringify({ providerId }),
-  });
-export const getAIUsage = () => request<AIUsageStats>("/ai/usage");
-
-export const aiPlan = (goal: string, projectSlug?: string) =>
-  request<AIPlanResult>("/ai/plan", { method: "POST", body: JSON.stringify({ goal, projectSlug }) });
-export const aiNextTask = (slug: string) =>
-  request<AINextTaskResult>(`/ai/projects/${encodeURIComponent(slug)}/next-task`);
-export const aiAsk = (slug: string, question: string) =>
-  request<AIAskResult>(`/ai/projects/${encodeURIComponent(slug)}/ask`, {
-    method: "POST",
-    body: JSON.stringify({ question }),
-  });
-export const aiBootstrap = (prd: string, projectSlug?: string) =>
-  request<AIBootstrapResult>("/ai/bootstrap", { method: "POST", body: JSON.stringify({ prd, projectSlug }) });
-export const aiRecap = (slug: string, confirm?: boolean) =>
-  request<AIRecapResult>(`/ai/projects/${encodeURIComponent(slug)}/recap`, {
-    method: "POST",
-    body: JSON.stringify({ confirm }),
-  });
-export const aiCommitMessage = (projectSlug?: string, diff?: string) =>
-  request<AICommitResult>("/ai/git/commit-message", {
-    method: "POST",
-    body: JSON.stringify({ projectSlug, diff }),
-  });
-
-// ── Gemini CLI management ───────────────────────────────────────────────────
-export interface GeminiCliStatus {
-  installed: boolean;
-  version: string | null;
-  authenticated: boolean;
-}
-export const getGeminiCliStatus = () =>
-  request<GeminiCliStatus>("/ai/gemini-cli/status");
-export const getGeminiCliAuthUrl = () =>
-  request<{ url: string | null; rawOutput: string }>("/ai/gemini-cli/auth-url", { method: "POST" });
-export const submitGeminiCliAuthCode = (code: string) =>
-  request<{ success: boolean; rawOutput: string }>("/ai/gemini-cli/auth-code", {
-    method: "POST",
-    body: JSON.stringify({ code }),
-  });
-
-// ── API Key management ──────────────────────────────────────────────────────
-export interface ApiKeyStatus {
-  providerId: string;
-  hasKey: boolean;
-  maskedKey: string | null;
-}
-export const getApiKeyStatus = (providerId: string) =>
-  request<ApiKeyStatus>(`/ai/api-keys/${encodeURIComponent(providerId)}`);
-export const setApiKey = (providerId: string, apiKey: string) =>
-  request<{ providerId: string; maskedKey: string }>(`/ai/api-keys/${encodeURIComponent(providerId)}`, {
-    method: "PUT",
-    body: JSON.stringify({ apiKey }),
-  });
-export const clearApiKey = (providerId: string) =>
-  request<{ providerId: string; hasKey: boolean }>(`/ai/api-keys/${encodeURIComponent(providerId)}`, {
-    method: "DELETE",
-  });

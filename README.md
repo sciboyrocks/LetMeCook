@@ -25,9 +25,8 @@ LetMeCook is a **fully self-hosted personal developer dashboard** that brings to
 - **Browser-based IDE** (code-server) with a built-in VS Code extension
 - **Project management** with tasks, milestones, and kanban boards
 - **Activity tracking** with a GitHub-style heatmap and weekly wrapped summaries
-- **Background jobs** for git cloning, scaffolding, backups, and AI tasks
-- **AI copilot** for generating tasks, commit messages, repo chat, and more
-- **Google Drive backups**, **Cloudflare Tunnel** integration, and **dev journal**
+- **Background jobs** for git cloning, scaffolding, exports, and backups
+- **Google Drive backups**, **dev journal**, and runtime monitoring
 
 Deploy it on any Linux server with Docker and you're ready to go.
 
@@ -101,26 +100,14 @@ On first visit you'll be guided through **TOTP setup** — scan the QR code with
 - Pre-installed **LetMeCook VS Code extension** with:
   - Activity heartbeat tracking (auto-tracks coding time)
   - Task sidebar and quick actions
-  - One-click Cloudflare tunnel to expose ports
+  - Direct dev-domain port links
   - Git commit & push from the command palette
-  - AI commands (generate tasks, explain errors, commit messages)
-
-### 🤖 AI Copilot
-- Multi-provider support: **Gemini**, **OpenAI**, **Anthropic**
-- Generate task checklists from a goal sentence
-- Auto-generate commit messages from staged diffs
-- Chat with your repo (AI reads your code for context)
-- Bootstrap entire projects from a PRD
-- Session recaps → auto-drafted journal entries
-- Built-in rate limiting and safety guardrails
 
 ### 📓 Dev Journal
 - Write daily entries documenting what you built
 - Attach images (up to 10 MB)
-- AI can auto-draft journal entries from your session activity
 
 ### 🔧 Infrastructure
-- **Cloudflare Tunnel** management — expose ports publicly with one click
 - **System monitor** — live CPU, RAM, disk, and container stats
 - **Google Drive backups** — automatic project backups (keeps last 7)
 - **Audit logging** for security-sensitive operations
@@ -185,7 +172,7 @@ On first visit you'll be guided through **TOTP setup** — scan the QR code with
            │ process
     ┌──────▼──────────────────────────────┐
     │  Worker (separate Node.js process)  │
-    │  clone · scaffold · backup · AI    │
+    │  clone · scaffold · backup          │
     │  export-zip · progress via SSE     │
     └─────────────────────────────────────┘
 ```
@@ -210,10 +197,10 @@ letmecook/
 ├── apps/
 │   ├── api/          ← Fastify backend (TypeScript)
 │   │   └── src/
-│   │       ├── routes/       18 route modules
+│   │       ├── routes/       API route modules
 │   │       ├── plugins/      auth + security
 │   │       ├── db/           SQLite + migrations
-│   │       ├── lib/          utilities + AI providers
+│   │       ├── lib/          utilities
 │   │       └── worker.ts     BullMQ job processor
 │   └── web/          ← Next.js frontend
 │       ├── app/              pages (dashboard, projects, quest, journal, monitor)
@@ -221,7 +208,7 @@ letmecook/
 │       └── lib/              typed API client
 ├── letmecook-extension/  ← VS Code extension
 │   └── src/
-│       ├── commands/         dashboard, clone, expose port, AI
+│       ├── commands/         dashboard, clone, expose port, git helpers
 │       └── providers/        task tree + webview
 ├── docker-compose.yml
 ├── Dockerfile            ← API image
@@ -246,7 +233,7 @@ Copy `.env.example` to `.env` and configure:
 | `CODE_SERVER_HOST` | — | Code-server hostname (default: `code-server`) |
 | `CODE_SERVER_PORT` | — | Code-server port (default: `8080`) |
 | `REDIS_URL` | — | Redis URL (default: `redis://redis:6379`) |
-| `DOMAIN` | — | Your public domain for CORS/tunnels (default: `localhost`) |
+| `DOMAIN` | — | Your public domain for CORS/session scope (default: `localhost`) |
 
 #### Optional: Google Drive Backups
 
@@ -255,15 +242,6 @@ Copy `.env.example` to `.env` and configure:
 | `GDRIVE_OAUTH_CLIENT_ID` | OAuth2 Client ID from Google Cloud Console |
 | `GDRIVE_OAUTH_CLIENT_SECRET` | OAuth2 Client Secret |
 | `GDRIVE_FOLDER_ID` | Target folder ID in Google Drive |
-
-#### Optional: AI Providers
-
-| Variable | Description |
-|----------|-------------|
-| `GEMINI_API_KEY` | Google Gemini API key |
-| `OPENAI_API_KEY` | OpenAI API key |
-| `ANTHROPIC_API_KEY` | Anthropic API key |
-| `*_MODEL` | Override default model for any provider |
 
 See [.env.example](.env.example) for the full list with comments.
 
@@ -310,16 +288,7 @@ docker compose down -v
 
 ## 🌐 Public Access (Optional)
 
-To expose LetMeCook publicly, use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/):
-
-1. [Install cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
-2. Authenticate: `cloudflared tunnel login`
-3. Create a tunnel: `cloudflared tunnel create letmecook`
-4. Update `cloudflared-config.yml` with your tunnel ID and hostname
-5. Route DNS: `cloudflared tunnel route dns letmecook yourdomain.com`
-6. Run: `cloudflared tunnel --config cloudflared-config.yml run`
-
-Or use any reverse proxy (Caddy, nginx, Traefik) to expose port `3001`.
+Use any reverse proxy (Caddy, nginx, Traefik) to expose port `3001` and terminate TLS.
 
 ---
 

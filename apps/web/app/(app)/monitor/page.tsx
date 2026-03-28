@@ -1,16 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   getSystemStats,
-  getActiveTunnels,
-  killTunnel,
-  getTunnelLogs,
   getAuditLogs,
   type SystemStats,
-  type Tunnel,
-  type AuditLog,
+  type AuditLog
 } from "@/lib/api";
 
 function formatUptime(seconds: number): string {
@@ -100,127 +96,7 @@ function ContainerRow({ name, status, image }: { name: string; status: string; i
   );
 }
 
-function TunnelRow({
-  tunnel,
-  onKill,
-  killing,
-}: {
-  tunnel: Tunnel;
-  onKill: () => void;
-  killing: boolean;
-}) {
-  const [showLogs, setShowLogs] = useState(false);
-  const logsEndRef = useRef<HTMLDivElement>(null);
-
-  const { data: logsData, isLoading: logsLoading } = useQuery({
-    queryKey: ["tunnel-logs", tunnel.id],
-    queryFn: async () => {
-      const res = await getTunnelLogs(tunnel.id);
-      return res.ok ? res.data.lines : [];
-    },
-    enabled: showLogs,
-    refetchInterval: showLogs ? 3000 : false,
-  });
-
-  useEffect(() => {
-    if (showLogs && logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [logsData, showLogs]);
-
-  const isActive = tunnel.status === "active";
-  return (
-    <div
-      className="rounded-lg border overflow-hidden"
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-card)" }}
-    >
-      <div className="flex items-center gap-3 px-4 py-3">
-        <span
-          className="h-2 w-2 shrink-0 rounded-full"
-          style={{
-            background:
-              tunnel.status === "active"
-                ? "#34d399"
-                : tunnel.status === "starting"
-                ? "#fbbf24"
-                : "#f87171",
-          }}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-              :{tunnel.port}
-            </span>
-            {tunnel.url && (
-              <a
-                href={tunnel.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="truncate text-xs underline-offset-2 hover:underline"
-                style={{ color: "#38bdf8" }}
-              >
-                {tunnel.url}
-              </a>
-            )}
-          </div>
-          <div className="text-xs" style={{ color: "var(--text-muted)" }}>
-            {tunnel.status}
-            {tunnel.errorMsg && ` — ${tunnel.errorMsg}`}
-          </div>
-        </div>
-        <button
-          onClick={() => setShowLogs((v) => !v)}
-          className="shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition-colors hover:opacity-80"
-          style={{
-            background: showLogs ? "rgba(56,189,248,0.18)" : "rgba(56,189,248,0.08)",
-            color: "#38bdf8",
-          }}
-        >
-          Logs
-        </button>
-        {(isActive || tunnel.status === "starting") && (
-          <button
-            onClick={onKill}
-            disabled={killing}
-            className="shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition-colors hover:opacity-80 disabled:opacity-40"
-            style={{ background: "rgba(248,113,113,0.15)", color: "#f87171" }}
-          >
-            {killing ? "Killing…" : "Kill"}
-          </button>
-        )}
-      </div>
-      {showLogs && (
-        <div
-          className="border-t px-0 py-0"
-          style={{ borderColor: "var(--border-subtle)" }}
-        >
-          <div
-            className="h-48 overflow-y-auto p-3 font-mono text-xs"
-            style={{ background: "var(--bg-base)", color: "#a3e635" }}
-          >
-            {logsLoading ? (
-              <span style={{ color: "var(--text-muted)" }}>Loading logs…</span>
-            ) : logsData && logsData.length > 0 ? (
-              <>
-                {logsData.map((line, i) => (
-                  <div key={i} className="whitespace-pre-wrap break-all leading-5">
-                    {line}
-                  </div>
-                ))}
-                <div ref={logsEndRef} />
-              </>
-            ) : (
-              <span style={{ color: "var(--text-muted)" }}>No logs yet…</span>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function MonitorPage() {
-  const queryClient = useQueryClient();
   const [stats, setStats] = useState<SystemStats | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -244,23 +120,6 @@ export default function MonitorPage() {
       es.close();
     };
   }, []);
-
-  // Active tunnels
-  const { data: tunnels = [] } = useQuery({
-    queryKey: ["active-tunnels"],
-    queryFn: async () => {
-      const res = await getActiveTunnels();
-      return res.ok ? res.data : [];
-    },
-    refetchInterval: 5000,
-  });
-
-  const killMutation = useMutation({
-    mutationFn: (id: string) => killTunnel(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["active-tunnels"] });
-    },
-  });
 
   // Audit logs
   const { data: auditLogs = [] } = useQuery({
@@ -344,32 +203,6 @@ export default function MonitorPage() {
           </div>
         </section>
       )}
-
-      {/* ── Active Tunnels ──────────────────────────────────────────────── */}
-      <section className="mb-7">
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-secondary)" }}>
-          Active Tunnels ({tunnels.length})
-        </h2>
-        {tunnels.length === 0 ? (
-          <div
-            className="rounded-xl border px-4 py-6 text-center text-sm"
-            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-card)", color: "var(--text-muted)" }}
-          >
-            No active tunnels
-          </div>
-        ) : (
-          <div className="grid gap-2">
-            {tunnels.map((t) => (
-              <TunnelRow
-                key={t.id}
-                tunnel={t}
-                onKill={() => killMutation.mutate(t.id)}
-                killing={killMutation.isPending && killMutation.variables === t.id}
-              />
-            ))}
-          </div>
-        )}
-      </section>
 
       {/* ── Audit Log ──────────────────────────────────────────────────── */}
       <section className="mb-7">
