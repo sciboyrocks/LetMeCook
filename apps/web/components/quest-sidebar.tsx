@@ -26,6 +26,15 @@ const NAV_ITEMS = [
     ),
   },
   {
+    href: "/passwords",
+    label: "Passwords",
+    icon: (
+      <svg className="h-[18px] w-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-2.25 0h13.5A1.5 1.5 0 0120.25 12v7.5A1.5 1.5 0 0118.75 21h-13.5A1.5 1.5 0 013.75 19.5V12a1.5 1.5 0 011.5-1.5z" />
+      </svg>
+    ),
+  },
+  {
     href: "/quest",
     label: "Worker Logs",
     icon: (
@@ -345,9 +354,8 @@ export default function QuestSidebar() {
 
       {/* Mobile drawer */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-60 border-r shadow-2xl transition-transform duration-300 ease-out lg:hidden ${
-          mobileOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
+        className={`fixed inset-y-0 left-0 z-50 w-60 border-r shadow-2xl transition-transform duration-300 ease-out lg:hidden ${mobileOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
         style={{
           borderColor: "var(--border-subtle)",
           background: "var(--bg-elevated)",

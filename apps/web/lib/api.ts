@@ -554,3 +554,62 @@ export const addQuickLink = (title: string, url: string, faviconUrl?: string) =>
 
 export const deleteQuickLink = (id: string) =>
   request<QuickLink[]>(`/quick-links/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+// ── Password Manager ─────────────────────────────────────────────────────────
+export interface PasswordTotpSnapshot {
+  code: string;
+  period: number;
+  expiresIn: number;
+}
+
+export interface PasswordEntry {
+  id: string;
+  title: string;
+  username: string;
+  website: string;
+  notes: string;
+  password: string;
+  hasTotp: boolean;
+  totp: PasswordTotpSnapshot | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const getPasswords = () =>
+  request<PasswordEntry[]>("/passwords");
+
+export const createPasswordEntry = (body: {
+  title: string;
+  username?: string;
+  website?: string;
+  notes?: string;
+  password?: string;
+  totpSecret?: string;
+}) =>
+  request<{ id: string }>("/passwords", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const updatePasswordEntry = (
+  id: string,
+  body: {
+    title?: string;
+    username?: string;
+    website?: string;
+    notes?: string;
+    password?: string;
+    totpSecret?: string;
+    clearPassword?: boolean;
+    clearTotp?: boolean;
+  }
+) =>
+  request<{ id: string }>(`/passwords/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+
+export const deletePasswordEntry = (id: string) =>
+  request<{ success: boolean }>(`/passwords/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
