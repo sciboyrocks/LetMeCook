@@ -14,7 +14,7 @@
   "scripts": {
     "preinstall": "node -e \"if(!process.env.npm_execpath||!process.env.npm_execpath.includes('pnpm')){console.error('This workspace uses pnpm. Run: pnpm install (from repo root)');process.exit(1)}\"",
     "dev": "sh -c 'tsx watch --env-file .env src/worker.ts & tsx watch --env-file .env src/index.ts'",
-    "build": "tsc",
+    "build": "tsc && cp -r src/db/migrations dist/db/migrations",
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "worker": "tsx watch --env-file .env src/worker.ts"
@@ -40,6 +40,7 @@
     "pino-pretty": "^13.0.0",
     "qrcode": "^1.5.4",
     "uuid": "^11.1.0",
+    "ws": "^8.21.3",
     "zod": "^3.24.2"
   },
   "devDependencies": {
@@ -48,6 +49,7 @@
     "@types/busboy": "^1.5.4",
     "@types/node": "^22.13.11",
     "@types/qrcode": "^1.5.5",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2"
   }

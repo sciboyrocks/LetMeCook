@@ -1,7 +1,7 @@
 # ── Build stage ────────────────────────────────────────────────────────────
 FROM node:22-slim AS builder
-
-RUN npm install -g pnpm
+	
+RUN npm install -g pnpm@9.15.0
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ RUN cd apps/api && pnpm build
 # ── Runtime stage ───────────────────────────────────────────────────────────
 FROM node:22-slim AS runtime
 
-RUN npm install -g pnpm
+RUN npm install -g pnpm@9.15.0
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \

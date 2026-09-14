@@ -1,6 +1,8 @@
-node_modules/
+**/node_modules/
+**/dist/
+**/.next/
+**/.turbo/
 data/
-.env
-*.db
-*.db-wal
-*.db-shm
+.env*
+*.db*
+.git/

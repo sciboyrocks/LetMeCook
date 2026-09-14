@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
-import { generateSync } from 'otplib';
+import { generateSync, createGuardrails } from 'otplib';
 import { db } from '../db/index.js';
 import { decryptSecret, encryptSecret } from '../lib/vault.js';
 
@@ -17,6 +17,19 @@ type PasswordRow = {
   totp_cipher: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type TotpStatus = 'ok' | 'invalid_secret' | 'decrypt_failed';
+
+type PasswordPatchBody = {
+  title?: unknown;
+  username?: unknown;
+  website?: unknown;
+  notes?: unknown;
+  password?: unknown;
+  totpSecret?: unknown;
+  clearPassword?: unknown;
+  clearTotp?: unknown;
 };
 
 function cleanOptionalText(value: unknown, maxLen: number): string {
@@ -43,7 +56,11 @@ function parseTotpInput(input: string): string {
 function getTotpSnapshot(secret: string): { code: string; period: number; expiresIn: number } {
   const period = 30;
   const now = Math.floor(Date.now() / 1000);
-  const code = generateSync({ strategy: 'totp', secret });
+  const code = generateSync({
+    strategy: 'totp',
+    secret,
+    guardrails: createGuardrails({ MIN_SECRET_BYTES: 1 }),
+  });
   return {
     code,
     period,
@@ -64,13 +81,28 @@ export async function passwordsRoutes(fastify: FastifyInstance) {
 
       const data = rows.map((row) => {
         let totp: { code: string; period: number; expiresIn: number } | null = null;
+        let totpStatus: TotpStatus | undefined;
 
         if (row.totp_cipher) {
+          let secret = '';
+
           try {
-            const secret = decryptSecret(row.totp_cipher);
-            if (secret) totp = getTotpSnapshot(secret);
+            secret = decryptSecret(row.totp_cipher);
           } catch {
-            totp = null;
+            totpStatus = 'decrypt_failed';
+          }
+
+          if (!totpStatus) {
+            if (!secret) {
+              totpStatus = 'invalid_secret';
+            } else {
+              try {
+                totp = getTotpSnapshot(secret);
+                totpStatus = 'ok';
+              } catch {
+                totpStatus = 'invalid_secret';
+              }
+            }
           }
         }
 
@@ -90,6 +122,7 @@ export async function passwordsRoutes(fastify: FastifyInstance) {
           })(),
           hasTotp: !!row.totp_cipher,
           totp,
+          totpStatus,
           created_at: row.created_at,
           updated_at: row.updated_at,
         };
@@ -147,20 +180,43 @@ export async function passwordsRoutes(fastify: FastifyInstance) {
 
   fastify.patch<{
     Params: { id: string };
-    Body: {
-      title?: string;
-      username?: string;
-      website?: string;
-      notes?: string;
-      password?: string;
-      totpSecret?: string;
-      clearPassword?: boolean;
-      clearTotp?: boolean;
-    };
+    Body: PasswordPatchBody;
   }>(
     '/api/passwords/:id',
     { preHandler: [fastify.requireAuth as typeof requireAuth] },
     async (req, reply) => {
+      const body = (req.body ?? {}) as PasswordPatchBody;
+      const hasPatchField =
+        body.title !== undefined ||
+        body.username !== undefined ||
+        body.website !== undefined ||
+        body.notes !== undefined ||
+        body.password !== undefined ||
+        body.totpSecret !== undefined ||
+        body.clearPassword !== undefined ||
+        body.clearTotp !== undefined;
+
+      if (!hasPatchField) {
+        return reply.status(400).send({
+          ok: false,
+          error: { code: 'EMPTY_PATCH', message: 'No updatable fields were provided' },
+        });
+      }
+
+      if (body.clearPassword !== undefined && typeof body.clearPassword !== 'boolean') {
+        return reply.status(400).send({
+          ok: false,
+          error: { code: 'INVALID_CLEAR_PASSWORD', message: 'clearPassword must be a boolean' },
+        });
+      }
+
+      if (body.clearTotp !== undefined && typeof body.clearTotp !== 'boolean') {
+        return reply.status(400).send({
+          ok: false,
+          error: { code: 'INVALID_CLEAR_TOTP', message: 'clearTotp must be a boolean' },
+        });
+      }
+
       const row = db
         .prepare<[string], PasswordRow>(
           'SELECT id, title, username, website, notes, password_cipher, totp_cipher, created_at, updated_at FROM passwords WHERE id = ?'
@@ -171,29 +227,35 @@ export async function passwordsRoutes(fastify: FastifyInstance) {
         return reply.status(404).send({ ok: false, error: { code: 'NOT_FOUND', message: 'Entry not found' } });
       }
 
-      const title = req.body.title !== undefined ? cleanOptionalText(req.body.title, 140) : row.title;
+      const title = body.title !== undefined ? cleanOptionalText(body.title, 140) : row.title;
       if (!title) {
         return reply.status(400).send({ ok: false, error: { code: 'INVALID_TITLE', message: 'Title is required' } });
       }
 
-      const username = req.body.username !== undefined ? cleanOptionalText(req.body.username, 200) : row.username;
-      const website = req.body.website !== undefined ? cleanOptionalText(req.body.website, 300) : row.website;
-      const notes = req.body.notes !== undefined ? cleanOptionalText(req.body.notes, 4000) : row.notes;
+      const username = body.username !== undefined ? cleanOptionalText(body.username, 200) : row.username;
+      const website = body.website !== undefined ? cleanOptionalText(body.website, 300) : row.website;
+      const notes = body.notes !== undefined ? cleanOptionalText(body.notes, 4000) : row.notes;
 
       let passwordCipher = row.password_cipher;
-      if (req.body.clearPassword) {
+      if (body.clearPassword) {
         passwordCipher = null;
-      } else if (req.body.password !== undefined) {
-        const value = req.body.password.slice(0, 4000);
+      } else if (body.password !== undefined) {
+        if (typeof body.password !== 'string') {
+          return reply.status(400).send({ ok: false, error: { code: 'INVALID_PASSWORD', message: 'Password must be a string' } });
+        }
+        const value = body.password.slice(0, 4000);
         passwordCipher = value ? encryptSecret(value) : null;
       }
 
       let totpCipher = row.totp_cipher;
-      if (req.body.clearTotp) {
+      if (body.clearTotp) {
         totpCipher = null;
-      } else if (req.body.totpSecret !== undefined) {
-        const secret = parseTotpInput(req.body.totpSecret);
-        if (req.body.totpSecret.trim() && !secret) {
+      } else if (body.totpSecret !== undefined) {
+        if (typeof body.totpSecret !== 'string') {
+          return reply.status(400).send({ ok: false, error: { code: 'INVALID_TOTP', message: 'TOTP secret must be a string' } });
+        }
+        const secret = parseTotpInput(body.totpSecret);
+        if (body.totpSecret.trim() && !secret) {
           return reply.status(400).send({ ok: false, error: { code: 'INVALID_TOTP', message: 'TOTP secret or otpauth URL is invalid' } });
         }
         totpCipher = secret ? encryptSecret(secret) : null;

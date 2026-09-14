@@ -3,14 +3,18 @@ FROM node:22-slim AS builder
 
 WORKDIR /app
 
-RUN npm install -g pnpm
+RUN npm install -g pnpm@9.15.0
 
 COPY pnpm-workspace.yaml .npmrc package.json pnpm-lock.yaml ./
 COPY apps/web/package.json ./apps/web/
+COPY apps/api/package.json ./apps/api/
+COPY letmecook-extension/package.json ./letmecook-extension/
 
-RUN pnpm install --filter @letmecook/web --frozen-lockfile
+RUN pnpm install --frozen-lockfile
 
 COPY apps/web ./apps/web
+
+RUN pnpm install --frozen-lockfile
 
 ENV NEXT_PUBLIC_API_URL=http://api:3000
 RUN cd apps/web && pnpm build
@@ -20,12 +24,14 @@ FROM node:22-slim AS runtime
 
 WORKDIR /app
 
-RUN npm install -g pnpm
+RUN npm install -g pnpm@9.15.0
 
 COPY pnpm-workspace.yaml .npmrc package.json pnpm-lock.yaml ./
 COPY apps/web/package.json ./apps/web/
+COPY apps/api/package.json ./apps/api/
+COPY letmecook-extension/package.json ./letmecook-extension/
 
-RUN pnpm install --filter @letmecook/web --prod --frozen-lockfile
+RUN pnpm install --prod --frozen-lockfile
 
 COPY --from=builder /app/apps/web/.next ./apps/web/.next
 COPY --from=builder /app/apps/web/public ./apps/web/public

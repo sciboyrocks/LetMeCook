@@ -33,8 +33,10 @@ export function runMigrations(db: Database): void {
     const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
 
     db.transaction(() => {
+      const already = db.prepare('SELECT 1 FROM schema_migrations WHERE version = ?').get(version);
+      if (already) return;
       db.exec(sql);
-      db.prepare('INSERT INTO schema_migrations (version) VALUES (?)').run(version);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)').run(version);
     })();
 
     console.log(`✅ Migration applied: ${file}`);

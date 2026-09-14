@@ -39,7 +39,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 # Install Node.js 22
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
-    npm install -g pnpm && \
+    npm install -g pnpm@9.15.0 && \
     rm -rf /var/lib/apt/lists/*
 
 # Create projects dir and Homebrew prefix

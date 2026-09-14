@@ -71,7 +71,7 @@ services:
           fi
           usermod -aG "$${DOCKER_GID}" coder
         fi
-        exec su -s /bin/bash coder -c '/usr/bin/entrypoint.sh --bind-addr 0.0.0.0:8080 --auth none --disable-telemetry --proxy-domain ${LETMECOOK_DEV_DOMAIN}'
+        exec su -s /bin/bash coder -c '/usr/bin/entrypoint.sh --bind-addr 0.0.0.0:8080 --auth none --disable-telemetry'
 
   api:
     build:

@@ -13,6 +13,7 @@ import { activityRoutes } from './routes/activity.routes.js';
 import { journalRoutes } from './routes/journal.routes.js';
 import { backupsRoutes } from './routes/backups.routes.js';
 import { passwordsRoutes } from './routes/passwords.routes.js';
+import { remoteDesktopRoutes } from './routes/remote-desktop.routes.js';
 import { codeServerProxy } from './proxy/code-server.js';
 import { config } from './config.js';
 import { startAuditFlusher, stopAuditFlusher, flushAuditLogs } from './lib/audit.js';
@@ -53,6 +54,7 @@ export async function buildApp() {
   await fastify.register(journalRoutes);
   await fastify.register(backupsRoutes);
   await fastify.register(passwordsRoutes);
+  await fastify.register(remoteDesktopRoutes);
   await fastify.register(jobsRoutes);
   await fastify.register(codeServerProxy);
 

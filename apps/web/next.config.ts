@@ -12,7 +12,8 @@ const nextConfig: NextConfig = {
   // missing apps/web/node_modules. This alias pins it to the correct local path.
   turbopack: {
     resolveAlias: {
-      tailwindcss: path.resolve(__dirname, "node_modules/tailwindcss"),
+      tailwindcss: "./node_modules/tailwindcss",
+      "@once-ui-system/core": "./node_modules/@once-ui-system/core",
     },
   },
   async rewrites() {

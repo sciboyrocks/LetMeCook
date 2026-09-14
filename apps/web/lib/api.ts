@@ -562,6 +562,8 @@ export interface PasswordTotpSnapshot {
   expiresIn: number;
 }
 
+export type PasswordTotpStatus = "ok" | "invalid_secret" | "decrypt_failed";
+
 export interface PasswordEntry {
   id: string;
   title: string;
@@ -571,6 +573,7 @@ export interface PasswordEntry {
   password: string;
   hasTotp: boolean;
   totp: PasswordTotpSnapshot | null;
+  totpStatus?: PasswordTotpStatus;
   created_at: string;
   updated_at: string;
 }
@@ -613,3 +616,98 @@ export const deletePasswordEntry = (id: string) =>
   request<{ success: boolean }>(`/passwords/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
+
+// ── Remote Desktop ─────────────────────────────────────────────────────────
+export interface RemoteDesktopConnection {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  hasPassword: boolean;
+  color: string;
+  viewOnly: boolean;
+  quality: number;
+  compression: number;
+  scaleMode: 'fit' | 'original' | 'stretch';
+  showDotCursor: boolean;
+  lastConnectedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RemoteDesktopTokenData {
+  token: string;
+  connection: RemoteDesktopConnection & { password: string | null };
+}
+
+export interface RemoteDesktopTestResult {
+  reachable: boolean;
+  banner?: string;
+  latencyMs: number;
+  error?: string;
+  message?: string;
+}
+
+export const getRemoteDesktopConnections = () =>
+  request<RemoteDesktopConnection[]>("/remote-desktop/connections");
+
+export const getRemoteDesktopConnection = (id: string) =>
+  request<RemoteDesktopConnection>(`/remote-desktop/connections/${encodeURIComponent(id)}`);
+
+export const createRemoteDesktopConnection = (body: {
+  name: string;
+  host: string;
+  port?: number;
+  username?: string;
+  password?: string;
+  color?: string;
+  viewOnly?: boolean;
+  quality?: number;
+  compression?: number;
+  scaleMode?: string;
+  showDotCursor?: boolean;
+}) =>
+  request<RemoteDesktopConnection>("/remote-desktop/connections", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const updateRemoteDesktopConnection = (
+  id: string,
+  body: {
+    name?: string;
+    host?: string;
+    port?: number;
+    username?: string;
+    password?: string;
+    clearPassword?: boolean;
+    color?: string;
+    viewOnly?: boolean;
+    quality?: number;
+    compression?: number;
+    scaleMode?: string;
+    showDotCursor?: boolean;
+  }
+) =>
+  request<RemoteDesktopConnection>(`/remote-desktop/connections/${encodeURIComponent(id)}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const deleteRemoteDesktopConnection = (id: string) =>
+  request<{ success: boolean }>(`/remote-desktop/connections/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+
+export const getRemoteDesktopToken = (id: string) =>
+  request<RemoteDesktopTokenData>(`/remote-desktop/connections/${encodeURIComponent(id)}/token`, {
+    method: "POST",
+  });
+
+export const testRemoteDesktopConnection = (host: string, port?: number) =>
+  request<RemoteDesktopTestResult>("/remote-desktop/test", {
+    method: "POST",
+    body: JSON.stringify({ host, port }),
+  });
+

@@ -8,9 +8,11 @@
   "editor.guides.bracketPairs": "active",
   "editor.formatOnSave": true,
   "terminal.integrated.fontSize": 13,
-  "workbench.colorTheme": "Default Dark Modern",
+  "workbench.colorTheme": "Dark Modern",
   "files.autoSave": "afterDelay",
   "files.autoSaveDelay": 100,
   "explorer.confirmDelete": false,
-  "chat.viewSessions.orientation": "stacked"
+  "chat.viewSessions.orientation": "stacked",
+  "workbench.startupEditor": "none",
+  "window.menuBarVisibility": "toggle"
 }

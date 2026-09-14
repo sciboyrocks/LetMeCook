@@ -84,7 +84,7 @@ export async function codeServerProxy(fastify: FastifyInstance) {
   );
 
   // code-server static asset routes
-  for (const prefix of ['/stable-', '/vscode-remote-resource', '/_static', '/out']) {
+  for (const prefix of ['/stable-', '/vscode-remote-resource', '/vscode-resource', '/webview', '/_static', '/static', '/out']) {
     fastify.all<{ Params: { '*': string } }>(
       `${prefix}/*`,
       { preHandler: [fastify.requireAuth as typeof requireAuth] },

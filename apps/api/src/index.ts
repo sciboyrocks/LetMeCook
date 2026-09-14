@@ -3,6 +3,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { buildApp } from './app.js';
 import { config } from './config.js';
+import { isVncUpgrade, handleVncUpgrade } from './proxy/vnc-proxy.js';
 
 // Ensure required directories exist
 mkdirSync(config.dataDir, { recursive: true });
@@ -21,9 +22,12 @@ try {
   process.exit(1);
 }
 
-// WebSocket upgrade handler — proxy all WS connections to code-server
-// Sessions are cookie-based; we do a lightweight check here.
+// WebSocket upgrade handler — routes VNC WebSockets or proxies to code-server
 fastify.server.on('upgrade', (req: http.IncomingMessage, socket: net.Socket, head: Buffer) => {
+  if (isVncUpgrade(req)) {
+    handleVncUpgrade(req, socket, head);
+    return;
+  }
   const cookies: Record<string, string> = {};
   for (const part of (req.headers.cookie ?? '').split(';')) {
     const [k, ...v] = part.trim().split('=');

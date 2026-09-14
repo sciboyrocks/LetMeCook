@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { generateSecret, generateURI, verifySync } from 'otplib';
+import { generateSecret, generateURI, verifySync, createGuardrails } from 'otplib';
 import QRCode from 'qrcode';
 import { db } from '../db/index.js';
 import { getTotpSecret, setTotpSecret, isSetupComplete } from '../plugins/auth.plugin.js';
@@ -43,7 +43,11 @@ export async function authRoutes(fastify: FastifyInstance) {
         return reply.status(400).send({ ok: false, error: { code: 'INVALID_TOKEN_FORMAT', message: 'Invalid token format' } });
       }
 
-      const result = verifySync({ secret, token });
+      const result = verifySync({
+        secret,
+        token,
+        guardrails: createGuardrails({ MIN_SECRET_BYTES: 1 }),
+      });
 
       db.prepare('INSERT INTO login_attempts (ip, success) VALUES (?, ?)').run(normalizeIP(req), result.valid ? 1 : 0);
 
@@ -98,7 +102,11 @@ export async function authRoutes(fastify: FastifyInstance) {
       const secret = getTotpSecret();
       if (!secret) return reply.status(400).send({ ok: false, error: { code: 'NOT_SETUP', message: 'Not set up' } });
 
-      const check = verifySync({ secret, token: currentToken });
+      const check = verifySync({
+        secret,
+        token: currentToken,
+        guardrails: createGuardrails({ MIN_SECRET_BYTES: 1 }),
+      });
       if (!check.valid) {
         return reply.status(401).send({ ok: false, error: { code: 'INVALID_CODE', message: 'Current TOTP invalid' } });
       }
