@@ -36,12 +36,12 @@ export function getApiKey(): string {
   return cfg.get<string>('apiKey', '');
 }
 
-/** Returns the dev-forwarding domain, e.g. "dev.samrudhraikote.me" */
+/** Returns the dev-forwarding domain, e.g. "samrudhraikote.com" */
 export function getDevDomain(): string {
   const envDomain = process.env['LETMECOOK_DEV_DOMAIN'];
   if (envDomain) return envDomain.replace(/\/$/, '');
   const cfg = vscode.workspace.getConfiguration('letmecook');
-  return cfg.get<string>('devDomain', 'samrudhraikote.me');
+  return cfg.get<string>('devDomain', 'samrudhraikote.com');
 }
 
 /** Constructs the public URL for a dev-forwarded port. */

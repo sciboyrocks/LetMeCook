@@ -14,6 +14,13 @@ import {
 } from "@/lib/api";
 import type RFB from "@novnc/novnc";
 
+type PerformanceMode = "fast" | "balanced" | "quality" | "custom";
+const PERFORMANCE_PRESETS = {
+  fast: { quality: 2, compression: 1, width: 1280, height: 800 },
+  balanced: { quality: 5, compression: 2, width: 1920, height: 1080 },
+  quality: { quality: 8, compression: 2, width: undefined, height: undefined },
+};
+
 // ── Color Options ────────────────────────────────────────────────────────────
 const COLOR_PRESETS = [
   { label: "Orange", hex: "#f97316" },
@@ -57,8 +64,8 @@ const DEFAULT_FORM: ConnectionFormState = {
   password: "",
   color: "#f97316",
   viewOnly: false,
-  quality: 5,
-  compression: 0,
+  quality: 2,
+  compression: 1,
   scaleMode: "fit",
   showDotCursor: true,
 };
@@ -88,7 +95,7 @@ export default function RemoteDesktopPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [scaleMode, setScaleMode] = useState<"fit" | "original">("fit");
   const [isViewOnly, setIsViewOnly] = useState(false);
-  const [performanceMode, setPerformanceMode] = useState<"fast" | "balanced" | "quality">("fast");
+  const [performanceMode, setPerformanceMode] = useState<PerformanceMode>("fast");
   const [clipboardText, setClipboardText] = useState("");
   const [clipboardModalOpen, setClipboardModalOpen] = useState(false);
   const [shortcutsMenuOpen, setShortcutsMenuOpen] = useState(false);
@@ -101,6 +108,7 @@ export default function RemoteDesktopPage() {
 
   // RFB Ref
   const rfbRef = useRef<RFB | null>(null);
+  const connectionAttemptRef = useRef(0);
   const vncContainerRef = useRef<HTMLDivElement | null>(null);
   const fullscreenContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -291,6 +299,7 @@ export default function RemoteDesktopPage() {
 
   // Disconnect active RFB session
   const disconnectSession = useCallback(() => {
+    connectionAttemptRef.current += 1;
     if (rfbRef.current) {
       try {
         rfbRef.current.disconnect();
@@ -309,6 +318,8 @@ export default function RemoteDesktopPage() {
 
   // Connect to connection
   const connectToConnection = async (conn: RemoteDesktopConnection) => {
+    const attempt = ++connectionAttemptRef.current;
+    const isCurrent = () => connectionAttemptRef.current === attempt;
     if (rfbRef.current) {
       try {
         rfbRef.current.disconnect();
@@ -317,6 +328,9 @@ export default function RemoteDesktopPage() {
     }
 
     setActiveConnection(conn);
+    setPerformanceMode("fast");
+    setPromptPasswordOpen(false);
+    setDesktopName("");
     setConnectionStatus("connecting");
     setStatusMessage(`Requesting connection ticket for ${conn.name}...`);
     setIsViewOnly(conn.viewOnly);
@@ -324,11 +338,14 @@ export default function RemoteDesktopPage() {
 
     try {
       const tokenRes = await getRemoteDesktopToken(conn.id);
+      if (!isCurrent()) return;
       if (!tokenRes.ok) {
         throw new Error(tokenRes.error.message || "Could not retrieve connection token");
       }
 
       const { token, connection: fullConn } = tokenRes.data;
+      // Keep decrypted credentials scoped to this attempt, out of page state.
+      setActiveConnection({ ...conn, quality: fullConn.quality, compression: fullConn.compression });
       const savedPassword = fullConn.password || undefined;
       const savedUsername = fullConn.username || undefined;
 
@@ -346,102 +363,99 @@ export default function RemoteDesktopPage() {
 
       const RFBClass = (await import("@novnc/novnc")).default;
 
-      setTimeout(() => {
-        if (!vncContainerRef.current) return;
+      // Wait for the session container to mount and apply the Fast viewport limits.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (!isCurrent() || !vncContainerRef.current) return;
 
-        while (vncContainerRef.current.firstChild) {
-          vncContainerRef.current.removeChild(vncContainerRef.current.firstChild);
+      while (vncContainerRef.current.firstChild) {
+        vncContainerRef.current.removeChild(vncContainerRef.current.firstChild);
+      }
+
+      const creds: { username?: string; password?: string } = {};
+      if (savedUsername) creds.username = savedUsername;
+      if (savedPassword) creds.password = savedPassword;
+
+      const rfb = new RFBClass(vncContainerRef.current, wsUrl, {
+        credentials: Object.keys(creds).length ? creds : undefined,
+        shared: true,
+        wsProtocols: ["binary"],
+      });
+
+      rfbRef.current = rfb;
+      rfb.viewOnly = conn.viewOnly;
+      rfb.scaleViewport = conn.scaleMode !== "original";
+      rfb.qualityLevel = PERFORMANCE_PRESETS.fast.quality;
+      rfb.compressionLevel = PERFORMANCE_PRESETS.fast.compression;
+      rfb.showDotCursor = conn.showDotCursor;
+      // This is a request; hosts without ExtendedDesktopSize keep their native resolution.
+      rfb.resizeSession = conn.scaleMode !== "original";
+
+      rfb.addEventListener("connect", () => {
+        if (!isCurrent()) return;
+        setConnectionStatus("connected");
+        setStatusMessage("Connected to remote desktop");
+        setPromptPasswordOpen(false);
+
+        requestAnimationFrame(() => {
+          if (!isCurrent() || rfbRef.current !== rfb) return;
+          const canvas = vncContainerRef.current?.querySelector("canvas");
+          if (canvas) {
+            canvas.tabIndex = 0;
+            canvas.style.cursor = "default";
+            canvas.focus();
+          }
+          rfb.focus();
+        });
+      });
+
+      rfb.addEventListener("disconnect", (e: any) => {
+        if (!isCurrent()) return;
+        setConnectionStatus("disconnected");
+        setStatusMessage(e.detail?.clean ? "Disconnected from remote host" : "Connection dropped unexpectedly");
+      });
+
+      rfb.addEventListener("desktopname", (e: any) => {
+        if (!isCurrent()) return;
+        if (e.detail?.name) setDesktopName(e.detail.name);
+      });
+
+      rfb.addEventListener("credentialsrequired", (e: any) => {
+        if (!isCurrent()) return;
+        const types: string[] = e.detail?.types || ["password"];
+        const needsUsername = types.includes("username");
+
+        // If we already have credentials that satisfy the requirement, automatically send them
+        if (savedPassword && (!needsUsername || savedUsername)) {
+          try {
+            rfb.sendCredentials({
+              username: savedUsername,
+              password: savedPassword,
+            });
+            return;
+          } catch (err) {
+            console.error("Auto-send credentials error:", err);
+          }
         }
 
-        const creds: { username?: string; password?: string } = {};
-        if (savedUsername) creds.username = savedUsername;
-        if (savedPassword) creds.password = savedPassword;
+        setConnectionStatus("connecting");
+        setPromptRequiresUsername(needsUsername);
+        setPromptUsernameValue(savedUsername || "");
+        setStatusMessage(
+          needsUsername
+            ? "macOS credentials required (Username and Password)"
+            : "VNC Password required"
+        );
+        setPromptPasswordOpen(true);
+      });
 
-        const rfb = new RFBClass(vncContainerRef.current, wsUrl, {
-          credentials: Object.keys(creds).length ? creds : undefined,
-          shared: true,
-          wsProtocols: ["binary"],
-        });
-
-        const initialPerformanceMode: "fast" | "balanced" | "quality" =
-          conn.compression === 0 ? "fast" : conn.compression === 1 ? "balanced" : "quality";
-        setPerformanceMode(initialPerformanceMode);
-
-        rfb.viewOnly = conn.viewOnly;
-        rfb.scaleViewport = conn.scaleMode !== "original";
-        rfb.qualityLevel = conn.quality;
-        rfb.compressionLevel = conn.compression;
-        // Always enable dot cursor so remote cursor position is clearly visible
-        rfb.showDotCursor = true;
-        // KEY PERFORMANCE OPTIMIZATION: Tell the VNC server to scale its framebuffer
-        // to match our viewport resolution instead of streaming at full Retina resolution
-        // (2940x1912 → ~1440x900 = 75% less data, 4x faster decompression & rendering)
-        rfb.resizeSession = true;
-
-        rfb.addEventListener("connect", () => {
-          setConnectionStatus("connected");
-          setStatusMessage("Connected to remote desktop");
-          setPromptPasswordOpen(false);
-
-          setTimeout(() => {
-            const canvas = vncContainerRef.current?.querySelector("canvas");
-            if (canvas) {
-              canvas.tabIndex = 0;
-              canvas.style.cursor = "default";
-              canvas.style.transform = "translateZ(0)";
-              canvas.style.willChange = "transform";
-              canvas.focus();
-            }
-            rfb.focus();
-          }, 100);
-        });
-
-        rfb.addEventListener("disconnect", (e: any) => {
-          setConnectionStatus("disconnected");
-          setStatusMessage(e.detail?.clean ? "Disconnected from remote host" : "Connection dropped unexpectedly");
-        });
-
-        rfb.addEventListener("desktopname", (e: any) => {
-          if (e.detail?.name) setDesktopName(e.detail.name);
-        });
-
-        rfb.addEventListener("credentialsrequired", (e: any) => {
-          const types: string[] = e.detail?.types || ["password"];
-          const needsUsername = types.includes("username");
-
-          // If we already have credentials that satisfy the requirement, automatically send them
-          if (savedPassword && (!needsUsername || savedUsername)) {
-            try {
-              rfb.sendCredentials({
-                username: savedUsername,
-                password: savedPassword,
-              });
-              return;
-            } catch (err) {
-              console.error("Auto-send credentials error:", err);
-            }
-          }
-
-          setConnectionStatus("connecting");
-          setPromptRequiresUsername(needsUsername);
-          setPromptUsernameValue(savedUsername || "");
-          setStatusMessage(
-            needsUsername
-              ? "macOS credentials required (Username and Password)"
-              : "VNC Password required"
-          );
-          setPromptPasswordOpen(true);
-        });
-
-        rfb.addEventListener("securityfailure", (e: any) => {
-          setConnectionStatus("error");
-          setStatusMessage(e.detail?.reason || "Authentication failed. Incorrect password.");
-          setPromptPasswordOpen(true);
-        });
-
-        rfbRef.current = rfb;
-      }, 50);
+      rfb.addEventListener("securityfailure", (e: any) => {
+        if (!isCurrent()) return;
+        setConnectionStatus("error");
+        setStatusMessage(e.detail?.reason || "Authentication failed. Incorrect password.");
+        setPromptPasswordOpen(true);
+      });
     } catch (err: any) {
+      if (!isCurrent()) return;
       setConnectionStatus("error");
       setStatusMessage(err.message || "Failed to initialize VNC connection");
     }
@@ -469,6 +483,7 @@ export default function RemoteDesktopPage() {
     const nextMode = scaleMode === "fit" ? "original" : "fit";
     setScaleMode(nextMode);
     rfbRef.current.scaleViewport = nextMode === "fit";
+    rfbRef.current.resizeSession = nextMode === "fit";
   };
 
   const toggleViewOnly = () => {
@@ -478,38 +493,34 @@ export default function RemoteDesktopPage() {
     rfbRef.current.viewOnly = next;
   };
 
-  const changePerformanceMode = (mode: "fast" | "balanced" | "quality") => {
+  const changePerformanceMode = (mode: PerformanceMode) => {
     setPerformanceMode(mode);
     if (!rfbRef.current) return;
-    let comp = 0;
-    let qual = 4;
-    if (mode === "balanced") {
-      comp = 1;
-      qual = 6;
-    } else if (mode === "quality") {
-      comp = 2;
-      qual = 8;
-    }
-    rfbRef.current.compressionLevel = comp;
-    rfbRef.current.qualityLevel = qual;
+    const settings = mode === "custom" ? activeConnection : PERFORMANCE_PRESETS[mode];
+    if (!settings) return;
+    rfbRef.current.compressionLevel = settings.compression;
+    rfbRef.current.qualityLevel = settings.quality;
   };
 
   const sendKey = (keysym: number, code?: string) => {
-    if (!rfbRef.current) return;
-    rfbRef.current.sendKey(keysym, code, true);
+    const rfb = rfbRef.current;
+    if (!rfb) return;
+    rfb.sendKey(keysym, code, true);
     setTimeout(() => {
-      rfbRef.current?.sendKey(keysym, code, false);
+      if (rfbRef.current === rfb) rfb.sendKey(keysym, code, false);
     }, 50);
   };
 
   const sendKeyCombo = (keys: { keysym: number; code?: string }[]) => {
-    if (!rfbRef.current) return;
+    const rfb = rfbRef.current;
+    if (!rfb) return;
     for (const k of keys) {
-      rfbRef.current.sendKey(k.keysym, k.code, true);
+      rfb.sendKey(k.keysym, k.code, true);
     }
     setTimeout(() => {
+      if (rfbRef.current !== rfb) return;
       for (const k of [...keys].reverse()) {
-        rfbRef.current?.sendKey(k.keysym, k.code, false);
+        rfb.sendKey(k.keysym, k.code, false);
       }
     }, 100);
   };
@@ -533,6 +544,7 @@ export default function RemoteDesktopPage() {
 
   useEffect(() => {
     return () => {
+      connectionAttemptRef.current += 1;
       if (rfbRef.current) {
         try {
           rfbRef.current.disconnect();
@@ -869,7 +881,7 @@ export default function RemoteDesktopPage() {
                       ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold"
                       : "text-neutral-400 hover:text-neutral-200"
                   }`}
-                  title="Ultra Fast (Zero compression, lowest latency, highest framerate)"
+                  title="Prioritize speed: lower image quality, light compression, desktop up to 1280 × 800"
                 >
                   ⚡ Fast
                 </button>
@@ -880,7 +892,7 @@ export default function RemoteDesktopPage() {
                       ? "bg-blue-500/20 text-blue-300 border border-blue-500/40 font-semibold"
                       : "text-neutral-400 hover:text-neutral-200"
                   }`}
-                  title="Balanced (Smooth framerate with clear text)"
+                  title="Medium image quality, desktop up to 1920 × 1080"
                 >
                   🚀 Balanced
                 </button>
@@ -894,6 +906,15 @@ export default function RemoteDesktopPage() {
                   title="High Quality (Maximum color precision and detail)"
                 >
                   💎 Crisp
+                </button>
+                <button
+                  onClick={() => changePerformanceMode("custom")}
+                  className={`rounded px-2 py-0.5 font-medium transition-all ${
+                    performanceMode === "custom" ? "bg-neutral-700 text-white" : "text-neutral-400 hover:text-neutral-200"
+                  }`}
+                  title="Use this connection's saved quality and compression settings"
+                >
+                  Custom
                 </button>
               </div>
 
@@ -1032,7 +1053,13 @@ export default function RemoteDesktopPage() {
                 rfbRef.current?.focus();
               }}
               className="w-full h-full flex items-center justify-center overflow-hidden cursor-default outline-none"
-              style={{ background: "#111" }}
+              style={{
+                background: "#111",
+                maxWidth: scaleMode === "fit" && performanceMode !== "custom"
+                  ? PERFORMANCE_PRESETS[performanceMode].width : undefined,
+                maxHeight: scaleMode === "fit" && performanceMode !== "custom"
+                  ? PERFORMANCE_PRESETS[performanceMode].height : undefined,
+              }}
             />
 
             {connectionStatus === "connecting" && !promptPasswordOpen && (
@@ -1661,6 +1688,9 @@ export default function RemoteDesktopPage() {
 
                 {showAdvanced && (
                   <div className="mt-3 space-y-3 pt-2">
+                    <p className="text-[11px] text-neutral-400">
+                      Sessions start in Fast mode. Select Custom during a session to use these saved settings.
+                    </p>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <div className="flex items-center justify-between mb-1">
@@ -1677,14 +1707,14 @@ export default function RemoteDesktopPage() {
                           onChange={(e) => setForm({ ...form, quality: Number(e.target.value) })}
                           className="w-full accent-orange-500"
                         />
-                        <p className="text-[10px] text-neutral-500 mt-0.5">4-6 recommended for desktop</p>
+                        <p className="text-[10px] text-neutral-500 mt-0.5">Lower values reduce image detail and bandwidth</p>
                       </div>
                       <div>
                         <div className="flex items-center justify-between mb-1">
                           <label className="block font-medium text-neutral-400">
                             Compression: <span className="font-mono text-white">{form.compression}</span>
                           </label>
-                          <span className="text-[10px] font-medium text-amber-400">{form.compression === 0 ? "⚡ Ultra Fast" : form.compression <= 2 ? "Balanced" : "High"}</span>
+                          <span className="text-[10px] font-medium text-amber-400">{form.compression === 0 ? "Off" : form.compression <= 2 ? "Light" : "High"}</span>
                         </div>
                         <input
                           type="range"
@@ -1694,7 +1724,7 @@ export default function RemoteDesktopPage() {
                           onChange={(e) => setForm({ ...form, compression: Number(e.target.value) })}
                           className="w-full accent-orange-500"
                         />
-                        <p className="text-[10px] text-neutral-500 mt-0.5">0 is lowest latency (zero host CPU compression delay)</p>
+                        <p className="text-[10px] text-neutral-500 mt-0.5">1–2 recommended; 0 sends more data, higher levels use more host CPU</p>
                       </div>
                     </div>
 

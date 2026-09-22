@@ -113,17 +113,6 @@ function sanitizeGitMessage(msg: string): string {
   return msg.replace(/:[^:@\s]+@/g, ':***@');
 }
 
-function getGithubAuthFromGh(): { token: string | null } {
-  const ghCheck = spawnSync('gh', ['--version'], { encoding: 'utf-8' });
-  if (ghCheck.status !== 0) return { token: null };
-
-  const tokenResult = spawnSync('gh', ['auth', 'token', '--hostname', 'github.com'], { encoding: 'utf-8' });
-  if (tokenResult.status !== 0) return { token: null };
-
-  const token = tokenResult.stdout.trim();
-  return { token: token || null };
-}
-
 async function runCommandStreaming(opts: {
   jobId: string;
   command: string;
@@ -204,11 +193,9 @@ async function processClone(jobId: string, payload: JobPayloadMap['clone'], time
 
   mkdirSync(config.projectsDir, { recursive: true });
 
-  let cloneUrl = repoUrl;
-  const ghAuth = getGithubAuthFromGh();
-  if (ghAuth.token && cloneUrl.startsWith('https://github.com/')) {
-    cloneUrl = cloneUrl.replace('https://github.com/', `https://x-access-token:${encodeURIComponent(ghAuth.token)}@github.com/`);
-  }
+  // Private repos authenticate through the system git credential helper
+  // (gh auth git-credential), so no token is written into the repo's remote.
+  const cloneUrl = repoUrl;
 
   const args = ['clone', '--progress', '--depth', '100'];
   if (payload.branch?.trim()) args.push('--branch', payload.branch.trim());

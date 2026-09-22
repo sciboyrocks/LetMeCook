@@ -88,8 +88,8 @@ export async function remoteDesktopRoutes(fastify: FastifyInstance) {
         password,
         color = '#f97316',
         viewOnly = false,
-        quality = 5,
-        compression = 0,
+        quality = 2,
+        compression = 1,
         scaleMode = 'fit',
         showDotCursor = true,
       } = req.body ?? {};
@@ -124,8 +124,8 @@ export async function remoteDesktopRoutes(fastify: FastifyInstance) {
 
       const numQuality = Number(quality);
       const numCompression = Number(compression);
-      const safeQuality = Math.min(9, Math.max(0, isNaN(numQuality) ? 5 : numQuality));
-      const safeCompression = Math.min(9, Math.max(0, isNaN(numCompression) ? 0 : numCompression));
+      const safeQuality = Math.min(9, Math.max(0, isNaN(numQuality) ? 2 : Math.round(numQuality)));
+      const safeCompression = Math.min(9, Math.max(0, isNaN(numCompression) ? 1 : Math.round(numCompression)));
 
       db.prepare(
         `INSERT INTO remote_desktop_connections (
@@ -263,10 +263,10 @@ export async function remoteDesktopRoutes(fastify: FastifyInstance) {
       const color = body.color !== undefined ? body.color : existing.color;
       const viewOnly = body.viewOnly !== undefined ? (body.viewOnly ? 1 : 0) : existing.view_only;
       const quality = body.quality !== undefined
-        ? Math.min(9, Math.max(0, isNaN(Number(body.quality)) ? 5 : Number(body.quality)))
+        ? Math.min(9, Math.max(0, isNaN(Number(body.quality)) ? 2 : Math.round(Number(body.quality))))
         : existing.quality;
       const compression = body.compression !== undefined
-        ? Math.min(9, Math.max(0, isNaN(Number(body.compression)) ? 0 : Number(body.compression)))
+        ? Math.min(9, Math.max(0, isNaN(Number(body.compression)) ? 1 : Math.round(Number(body.compression))))
         : existing.compression;
       const scaleMode = body.scaleMode !== undefined && ['fit', 'original', 'stretch'].includes(body.scaleMode)
         ? body.scaleMode

@@ -2,6 +2,9 @@
 FROM node:22-slim AS builder
 	
 RUN npm install -g pnpm@9.15.0
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    build-essential python3 && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -20,11 +23,16 @@ RUN cd apps/api && pnpm build
 FROM node:22-slim AS runtime
 
 RUN npm install -g pnpm@9.15.0
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl && \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    git curl build-essential python3 && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
     apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y gh && \
     rm -rf /var/lib/apt/lists/*
+
+# Authenticate git from the stored gh login so clones of private repos need no
+# credentials embedded in their remotes.
+RUN git config --system credential."https://github.com".helper '!gh auth git-credential'
 
 # Install Gemini CLI and create default settings
 RUN npm install -g @google/gemini-cli && \

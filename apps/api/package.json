@@ -17,7 +17,8 @@
     "build": "tsc && cp -r src/db/migrations dist/db/migrations",
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
-    "worker": "tsx watch --env-file .env src/worker.ts"
+    "worker": "tsx watch --env-file .env src/worker.ts",
+    "test:remote-desktop": "tsx --test tests/vnc-bridge.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^10.0.1",

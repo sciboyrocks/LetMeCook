@@ -36,6 +36,11 @@ export async function codeServerProxy(fastify: FastifyInstance) {
   // /code/:projectId routes so that "/code/proxy/3000" isn't misinterpreted
   // as projectId="proxy".  Fastify gives static segments priority over
   // parametric ones at the same tree level, so these will match first.
+  //
+  // Rather than tunnelling these through our own proxy (which is what
+  // produces the "letmecook.<domain>/code/proxy/<port>/" links users see in
+  // VS Code's built-in Ports panel), redirect to the port-forward nginx
+  // service's subdomain, e.g. "https://<port>.<devDomain>/".
   for (const proxyPrefix of ['proxy', 'absproxy']) {
     fastify.all<{ Params: { '*': string } }>(
       `/code/${proxyPrefix}/*`,
@@ -43,6 +48,15 @@ export async function codeServerProxy(fastify: FastifyInstance) {
       async (req, reply) => {
         const rest = (req.params as Record<string, string>)['*'] ?? '';
         const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+        const [portStr, ...subPathParts] = rest.split('/');
+        const port = Number(portStr);
+
+        if (Number.isInteger(port) && port > 0) {
+          const subPath = subPathParts.join('/');
+          const target = `https://${port}.${config.devDomain}${subPath ? `/${subPath}` : '/'}${qs}`;
+          return reply.redirect(target, 302);
+        }
+
         const targetPath = `/${proxyPrefix}/${rest}${qs}`;
         await proxyRequest(req, reply, targetPath);
       }

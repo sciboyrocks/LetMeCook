@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { openDashboard } from './commands/dashboard.js';
 import { cloneRepo } from './commands/clone.js';
+import { exposePort } from './commands/exposePort.js';
 import { openTasksPanel } from './providers/tasksWebviewPanel.js';
 import { LetMeCookTreeProvider, TaskItem } from './providers/tasksProvider.js';
 import { startHeartbeat } from './heartbeat.js';
@@ -54,6 +55,8 @@ export function activate(ctx: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('letmecook.openTasks', () => openTasksPanel(ctx)),
 
     vscode.commands.registerCommand('letmecook.cloneRepo', cloneRepo),
+
+    vscode.commands.registerCommand('letmecook.exposePort', exposePort),
 
     vscode.commands.registerCommand('letmecook.refreshTasks', () => treeProvider.refresh()),
 

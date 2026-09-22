@@ -12,6 +12,10 @@ let ghLoginProcess: ChildProcess | null = null;
 let ghLoginUrl: string | null = null;
 let ghLoginCode: string | null = null;
 
+function ghConfigDir(): string {
+  return process.env.GH_CONFIG_DIR?.trim() || join(homedir(), '.config', 'gh');
+}
+
 function parseGitHubRepoFromUrl(repoUrl: string): { owner: string; repo: string } | null {
   const value = repoUrl.trim();
   if (!value) return null;
@@ -267,6 +271,24 @@ export async function githubRoutes(fastify: FastifyInstance) {
     }
   );
 
+  // Serves the connected account's token to the git credential helper running
+  // in the code-server container, so every project authenticates off the single
+  // dashboard login instead of a token baked into each repo's remote.
+  fastify.get(
+    '/api/github/token',
+    { preHandler: [fastify.requireAuth as typeof requireAuth] },
+    async (_req, reply) => {
+      const token = ghAuthToken();
+      if (!token) {
+        return reply.status(400).send({
+          ok: false,
+          error: { code: 'GITHUB_NOT_CONNECTED', message: 'Login to GitHub CLI first' },
+        });
+      }
+      return reply.header('cache-control', 'no-store').send({ ok: true, data: { token } });
+    }
+  );
+
   fastify.get(
     '/api/github/profile',
     { preHandler: [fastify.requireAuth as typeof requireAuth] },
@@ -475,7 +497,7 @@ export async function githubRoutes(fastify: FastifyInstance) {
         run('gh', ['auth', 'logout', '--hostname', 'github.com', '--yes']);
       }
 
-      const ghHostsFile = join(homedir(), '.config', 'gh', 'hosts.yml');
+      const ghHostsFile = join(ghConfigDir(), 'hosts.yml');
       if (existsSync(ghHostsFile)) {
         try {
           unlinkSync(ghHostsFile);

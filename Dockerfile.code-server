@@ -46,6 +46,14 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
 RUN mkdir -p /projects && chown coder:coder /projects \
     && mkdir -p /home/linuxbrew/.linuxbrew && chown -R coder:coder /home/linuxbrew
 
+# GitHub auth for every project: a system-wide git credential helper backed by
+# the dashboard's GitHub connection, so repos never store credentials locally.
+COPY docker/git-credential-letmecook /usr/local/bin/git-credential-letmecook
+COPY docker/letmecook-github-env.sh /etc/profile.d/letmecook-github.sh
+RUN chmod +x /usr/local/bin/git-credential-letmecook \
+    && git config --system credential."https://github.com".helper letmecook \
+    && echo '. /etc/profile.d/letmecook-github.sh' >> /etc/bash.bashrc
+
 # Build and install the LetMeCook VS Code extension
 COPY letmecook-extension/ /tmp/letmecook-extension/
 RUN cd /tmp/letmecook-extension \

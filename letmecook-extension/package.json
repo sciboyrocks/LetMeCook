@@ -35,8 +35,8 @@
         },
         "letmecook.devDomain": {
           "type": "string",
-          "default": "samrudhraikote.me",
-          "description": "Domain used for port forwarding URLs, e.g. {port}.samrudhraikote.me (overridden by LETMECOOK_DEV_DOMAIN env var)"
+          "default": "samrudhraikote.com",
+          "description": "Domain used for port forwarding URLs, e.g. {port}.samrudhraikote.com (overridden by LETMECOOK_DEV_DOMAIN env var)"
         }
       }
     },
@@ -55,6 +55,11 @@
         "command": "letmecook.cloneRepo",
         "title": "LetMeCook: Clone a Repo into New Project",
         "icon": "$(repo-clone)"
+      },
+      {
+        "command": "letmecook.exposePort",
+        "title": "LetMeCook: Expose Port",
+        "icon": "$(globe)"
       },
       {
         "command": "letmecook.refreshTasks",
