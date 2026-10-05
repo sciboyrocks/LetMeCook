@@ -18,7 +18,7 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "worker": "tsx watch --env-file .env src/worker.ts",
-    "test:remote-desktop": "tsx --test tests/vnc-bridge.test.ts"
+    "test:remote-desktop": "tsx --test tests/vnc-bridge.test.ts tests/vnc-proxy.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^10.0.1",

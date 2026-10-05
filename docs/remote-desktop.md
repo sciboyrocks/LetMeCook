@@ -33,6 +33,13 @@ If a session drops without the user disconnecting, the viewer reconnects with a
 fresh ticket after 0.5, 1, 2, 4 and 8 seconds, keeping the current mode, and
 stops after five failed attempts or an authentication failure. noVNC reports a
 server-side close as clean, so every disconnect the user did not request counts.
+Reconnects keep the session's view-only and scale toggles and reuse a password
+typed into the prompt; leaving the session forgets it. After a rejected password
+the host's reason is shown and the next attempt opens a new connection.
+
+WebSocket access requires a ticket from
+`POST /api/remote-desktop/connections/:id/token`. Tickets expire after 60 seconds
+and are single use; a session cookie alone is never accepted.
 
 The relay batches bytes within one event-loop turn, up to a 64 KiB batch target.
 It pauses upstream reads at 256 KiB of outstanding sends and resumes at 64 KiB,
@@ -48,6 +55,7 @@ closes the host connection after three intervals without a pong or any input.
 
 Run `pnpm --filter @letmecook/api test:remote-desktop` for real-socket tests of
 fragmented RFB handshakes, Mac authentication selection, RFB 3.3 compatibility,
+single-use ticket authentication,
 final error delivery, a simulated slow WebSocket draining a 4 MiB update
 while pointer input continues in the opposite direction, and the idle heartbeat.
 

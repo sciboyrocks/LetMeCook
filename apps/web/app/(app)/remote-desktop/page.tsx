@@ -122,6 +122,8 @@ export default function RemoteDesktopPage() {
   const connectionAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const performanceModeRef = useRef<PerformanceMode>("fast");
+  // Credentials typed into the prompt, reused by reconnects so a blip does not ask again.
+  const manualCredentialsRef = useRef<{ id: string; username?: string; password: string } | null>(null);
   const vncContainerRef = useRef<HTMLDivElement | null>(null);
   const fullscreenContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -323,6 +325,7 @@ export default function RemoteDesktopPage() {
   const disconnectSession = useCallback(() => {
     connectionAttemptRef.current += 1;
     clearReconnectTimer();
+    manualCredentialsRef.current = null;
     if (rfbRef.current) {
       try {
         rfbRef.current.disconnect();
@@ -375,14 +378,14 @@ export default function RemoteDesktopPage() {
     setConnectionStatus("connecting");
     if (retry === 0) setStatusMessage(`Requesting connection ticket for ${conn.name}...`);
 
-    const scheduleReconnect = (failedRetries: number) => {
+    const scheduleReconnect = (failedRetries: number, current: Partial<RemoteDesktopConnection> = {}) => {
       if (failedRetries >= RECONNECT_DELAYS_MS.length) return false;
       const next = failedRetries + 1;
       setConnectionStatus("connecting");
       setStatusMessage(`Connection lost. Reconnecting (${next}/${RECONNECT_DELAYS_MS.length})...`);
       reconnectTimerRef.current = setTimeout(() => {
         if (!isCurrent()) return;
-        connectToConnection({ ...conn, performanceMode: performanceModeRef.current }, next);
+        connectToConnection({ ...conn, ...current, performanceMode: performanceModeRef.current }, next);
       }, RECONNECT_DELAYS_MS[failedRetries]);
       return true;
     };
@@ -399,8 +402,9 @@ export default function RemoteDesktopPage() {
       const { token, connection: fullConn } = tokenRes.data;
       // Keep decrypted credentials scoped to this attempt, out of page state.
       setActiveConnection({ ...conn, quality: fullConn.quality, compression: fullConn.compression });
-      const savedPassword = fullConn.password || undefined;
-      const savedUsername = fullConn.username || undefined;
+      const manual = manualCredentialsRef.current?.id === conn.id ? manualCredentialsRef.current : null;
+      const savedPassword = manual?.password || fullConn.password || undefined;
+      const savedUsername = manual?.username || fullConn.username || undefined;
 
       const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
       const wsProto = isHttps ? "wss:" : "ws:";
@@ -471,7 +475,14 @@ export default function RemoteDesktopPage() {
 
       rfb.addEventListener("disconnect", () => {
         if (!isCurrent()) return;
-        if (!authFailed && (wasConnected || retries > 0) && scheduleReconnect(retries)) return;
+        // securityfailure already reported the reason and reopened the prompt.
+        if (authFailed) return;
+        // Keep the user's in-session view-only and scale toggles across the reconnect.
+        const current: Partial<RemoteDesktopConnection> = {
+          viewOnly: rfb.viewOnly,
+          scaleMode: rfb.scaleViewport ? "fit" : "original",
+        };
+        if ((wasConnected || retries > 0) && scheduleReconnect(retries, current)) return;
         setConnectionStatus("disconnected");
         setStatusMessage(
           wasConnected || retries > 0
@@ -530,14 +541,21 @@ export default function RemoteDesktopPage() {
   };
 
   const handleSendPassword = () => {
-    if (!rfbRef.current) return;
+    if (!activeConnection) return;
+    const creds: { username?: string; password: string } = {
+      password: promptPasswordValue,
+    };
+    if (promptRequiresUsername || promptUsernameValue) {
+      creds.username = promptUsernameValue || activeConnection.username || undefined;
+    }
+    manualCredentialsRef.current = { id: activeConnection.id, ...creds };
+    setPromptPasswordValue("");
+    // The host closes the session after a failed attempt, so retry on a new connection.
+    if (connectionStatus === "error" || connectionStatus === "disconnected" || !rfbRef.current) {
+      connectToConnection(activeConnection);
+      return;
+    }
     try {
-      const creds: { username?: string; password?: string } = {
-        password: promptPasswordValue,
-      };
-      if (promptRequiresUsername || promptUsernameValue) {
-        creds.username = promptUsernameValue || activeConnection?.username || undefined;
-      }
       rfbRef.current.sendCredentials(creds);
       setPromptPasswordOpen(false);
       setStatusMessage("Authenticating...");
