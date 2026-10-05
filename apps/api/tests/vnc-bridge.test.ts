@@ -14,7 +14,7 @@ async function until(check: () => boolean) {
   }
 }
 
-async function fixture(t: TestContext, username = '') {
+async function fixture(t: TestContext, username = '', heartbeatMs?: number, autoPong = true) {
   const host = net.createServer();
   host.listen(0, '127.0.0.1');
   await once(host, 'listening');
@@ -25,9 +25,9 @@ async function fixture(t: TestContext, username = '') {
   let bridgeWs!: WebSocket;
   wss.on('connection', (ws) => {
     bridgeWs = ws;
-    relay = setupVncBridge(ws, '127.0.0.1', (host.address() as net.AddressInfo).port, username);
+    relay = setupVncBridge(ws, '127.0.0.1', (host.address() as net.AddressInfo).port, username, heartbeatMs);
   });
-  const client = new WebSocket(`ws://127.0.0.1:${(wss.address() as net.AddressInfo).port}`);
+  const client = new WebSocket(`ws://127.0.0.1:${(wss.address() as net.AddressInfo).port}`, { autoPong });
   const received: Buffer[] = [];
   client.on('message', (data) => received.push(data as Buffer));
   await once(client, 'open');
@@ -142,4 +142,23 @@ test('slow WebSocket drains pause screen reads, preserve bytes, and leave input 
   await until(() => !f.relay.isPaused());
   f.client.close();
   await until(() => f.relay.destroyed);
+});
+
+test('heartbeat keeps an idle session open while the browser answers pings', { timeout: 10_000 }, async (t) => {
+  const f = await fixture(t, '', 20);
+  await handshake(f);
+  let pings = 0;
+  f.client.on('ping', () => pings++);
+  await until(() => pings >= 6);
+  assert.equal(f.relay.destroyed, false);
+  f.upstream.write(Buffer.from([0, 0, 0, 0]));
+  await until(() => f.output().length === 16);
+});
+
+test('heartbeat closes the host socket when the browser stops answering', { timeout: 10_000 }, async (t) => {
+  const f = await fixture(t, '', 20, false);
+  await handshake(f);
+  const closed = once(f.client, 'close');
+  await until(() => f.relay.destroyed);
+  await closed;
 });

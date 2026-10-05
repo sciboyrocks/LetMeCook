@@ -4,9 +4,19 @@ import { WebSocket } from 'ws';
 const BATCH_BYTES = 64 * 1024;
 const HIGH_WATER_BYTES = 256 * 1024;
 const LOW_WATER_BYTES = 64 * 1024;
+// Idle desktops send nothing; pings keep proxies from timing out the socket and expose dead browsers.
+const HEARTBEAT_MS = 15_000;
+// A pong can queue behind screen data on a congested link, so allow several intervals.
+const MAX_MISSED_HEARTBEATS = 3;
 
 /** Ordered, lossless RFB relay. Never drop bytes: rectangles can depend on prior updates. */
-export function setupVncBridge(ws: WebSocket, host: string, port: number, username = '') {
+export function setupVncBridge(
+  ws: WebSocket,
+  host: string,
+  port: number,
+  username = '',
+  heartbeatMs = HEARTBEAT_MS
+) {
   const tcp = net.createConnection({ host, port });
   tcp.setNoDelay(true);
   tcp.setKeepAlive(true, 10_000);
@@ -22,10 +32,24 @@ export function setupVncBridge(ws: WebSocket, host: string, port: number, userna
   let serverVersionBytes = 0;
   let clientVersion = Buffer.alloc(0);
   let security = Buffer.alloc(0);
+  let missedHeartbeats = 0;
+
+  const heartbeat = setInterval(() => {
+    if (missedHeartbeats >= MAX_MISSED_HEARTBEATS) {
+      cleanup();
+      return;
+    }
+    missedHeartbeats++;
+    if (ws.readyState === WebSocket.OPEN) ws.ping();
+  }, heartbeatMs);
+  ws.on('pong', () => {
+    missedHeartbeats = 0;
+  });
 
   const cleanup = () => {
     if (closed) return;
     closed = true;
+    clearInterval(heartbeat);
     if (flushTimer) clearImmediate(flushTimer);
     pending = [];
     pendingBytes = 0;
@@ -95,6 +119,7 @@ export function setupVncBridge(ws: WebSocket, host: string, port: number, userna
   });
 
   ws.on('message', (message) => {
+    missedHeartbeats = 0;
     if (closed || !tcp.writable) return;
     const data = Buffer.isBuffer(message) ? message
       : Array.isArray(message) ? Buffer.concat(message) : Buffer.from(message);
