@@ -4,20 +4,23 @@ Sessions use noVNC in the browser, a binary WebSocket to the API, and a TCP
 connection from the API to the VNC host. Both network legs and the host's screen
 encoding affect latency; endpoint internet speed alone does not measure this path.
 
-Each connection stores a starting performance mode (default **Fast**, including
-connections saved before the setting existed). Changing the mode in the session
-toolbar applies immediately and is saved as that connection's starting mode.
+Every session uses one low-latency stream profile; there are no quality modes.
 
-| Mode | JPEG quality | Compression | Maximum viewport in Fit Screen |
-| --- | --- | --- | --- |
-| Fast | 1 | 6 | 1280 × 800 |
-| Balanced | 5 | 4 | 1920 × 1080 |
-| Crisp | 8 | 2 | Available window |
-| Custom | Saved setting | Saved setting | Available window |
+| Setting | Value | Why |
+| --- | --- | --- |
+| JPEG quality | 1 | Small updates; text and flat areas stay lossless under Tight |
+| Compression | 2 | Low host encode time per frame, the standard zlib balance |
+| Maximum desktop in Fit Screen | 1280 × 800 | Fewer pixels to capture, encode and send |
 
 JPEG quality only applies when the host encodes with Tight/JPEG; hosts that only
-use lossless encodings such as ZRLE ignore it. Higher compression sends fewer
-bytes for text and flat areas at the cost of host CPU.
+use lossless encodings such as ZRLE ignore it. The connection table still has
+the old `quality`, `compression` and `performance_mode` columns; the API no
+longer reads or writes them.
+
+On large screens the session panel fills the area beside the sidebar, so the
+desktop is sized from the window rather than the page column. The viewer bundle
+is loaded when the page opens and fetched alongside the connection ticket, and
+the relay opens the host connection before its database bookkeeping.
 
 Fit Screen requests a remote resize to the viewer dimensions. The viewport limit
 only reduces transferred pixels when the host accepts remote resizing. About two
@@ -30,7 +33,7 @@ View-only and 1:1 Scale sessions do not request a resize or apply the limit. See
 the [noVNC API](https://novnc.com/noVNC/docs/API.html).
 
 If a session drops without the user disconnecting, the viewer reconnects with a
-fresh ticket after 0.5, 1, 2, 4 and 8 seconds, keeping the current mode, and
+fresh ticket after 0.5, 1, 2, 4 and 8 seconds, and
 stops after five failed attempts or an authentication failure. noVNC reports a
 server-side close as clean, so every disconnect the user did not request counts.
 Reconnects keep the session's view-only and scale toggles and reuse a password
@@ -61,13 +64,11 @@ while pointer input continues in the opposite direction, and the idle heartbeat.
 
 For live validation after rebuilding/restarting the API and web services:
 
-1. Connect an existing saved connection and confirm Fast is selected. Switch to
-   Balanced, reconnect, and confirm Balanced is kept.
-2. Type, drag windows, and scroll while comparing Fast, Balanced, and Crisp.
+1. Connect an existing saved connection; the toolbar has no quality modes.
+2. Type, drag windows, and scroll to judge responsiveness.
 3. Verify the remote resolution changes on a host that accepts resizing; verify
    a host without support still displays correctly.
-4. Switch to Custom to verify saved settings, then toggle Fit Screen/1:1 and
-   fullscreen to check pointer positioning.
+4. Toggle Fit Screen/1:1 and fullscreen to check pointer positioning.
 5. Reconnect rapidly or disconnect while a ticket is loading; only the latest
    connection attempt should remain active.
 6. Restart the host's screen sharing during a session; the viewer should show

@@ -618,8 +618,6 @@ export const deletePasswordEntry = (id: string) =>
   });
 
 // ── Remote Desktop ─────────────────────────────────────────────────────────
-export type RemoteDesktopPerformanceMode = 'fast' | 'balanced' | 'quality' | 'custom';
-
 export interface RemoteDesktopConnection {
   id: string;
   name: string;
@@ -629,10 +627,7 @@ export interface RemoteDesktopConnection {
   hasPassword: boolean;
   color: string;
   viewOnly: boolean;
-  quality: number;
-  compression: number;
   scaleMode: 'fit' | 'original' | 'stretch';
-  performanceMode: RemoteDesktopPerformanceMode;
   showDotCursor: boolean;
   lastConnectedAt: string | null;
   createdAt: string;
@@ -666,10 +661,7 @@ export const createRemoteDesktopConnection = (body: {
   password?: string;
   color?: string;
   viewOnly?: boolean;
-  quality?: number;
-  compression?: number;
   scaleMode?: string;
-  performanceMode?: RemoteDesktopPerformanceMode;
   showDotCursor?: boolean;
 }) =>
   request<RemoteDesktopConnection>("/remote-desktop/connections", {
@@ -688,10 +680,7 @@ export const updateRemoteDesktopConnection = (
     clearPassword?: boolean;
     color?: string;
     viewOnly?: boolean;
-    quality?: number;
-    compression?: number;
     scaleMode?: string;
-    performanceMode?: RemoteDesktopPerformanceMode;
     showDotCursor?: boolean;
   }
 ) =>

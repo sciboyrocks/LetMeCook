@@ -78,11 +78,12 @@ export function handleVncUpgrade(
   socket.setNoDelay(true);
   socket.setKeepAlive(true, 10_000);
   wss.handleUpgrade(req, socket, head, (ws) => {
+    // Start the host connection first; bookkeeping must not delay the handshake.
+    setupVncBridge(ws, ticket.host, ticket.port, ticket.username);
     try {
       db.prepare(
         'UPDATE remote_desktop_connections SET last_connected_at = CURRENT_TIMESTAMP WHERE id = ?'
       ).run(ticket.connectionId);
     } catch {}
-    setupVncBridge(ws, ticket.host, ticket.port, ticket.username);
   });
 }

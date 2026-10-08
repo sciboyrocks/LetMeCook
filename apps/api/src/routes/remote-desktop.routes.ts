@@ -8,8 +8,6 @@ import { createVncTicket } from '../proxy/vnc-proxy.js';
 const requireAuth = (req: FastifyRequest, reply: FastifyReply) =>
   (req.server as FastifyInstance).requireAuth(req, reply);
 
-const PERFORMANCE_MODES = ['fast', 'balanced', 'quality', 'custom'];
-
 interface ConnectionRow {
   id: string;
   name: string;
@@ -19,10 +17,7 @@ interface ConnectionRow {
   password_cipher: string | null;
   color: string;
   view_only: number;
-  quality: number;
-  compression: number;
   scale_mode: string;
-  performance_mode: string;
   show_dot_cursor: number;
   last_connected_at: string | null;
   created_at: string;
@@ -39,10 +34,7 @@ function formatConnection(row: ConnectionRow) {
     hasPassword: Boolean(row.password_cipher),
     color: row.color,
     viewOnly: Boolean(row.view_only),
-    quality: row.quality,
-    compression: row.compression,
     scaleMode: row.scale_mode,
-    performanceMode: row.performance_mode,
     showDotCursor: Boolean(row.show_dot_cursor),
     lastConnectedAt: row.last_connected_at,
     createdAt: row.created_at,
@@ -75,10 +67,7 @@ export async function remoteDesktopRoutes(fastify: FastifyInstance) {
       password?: string;
       color?: string;
       viewOnly?: boolean;
-      quality?: number;
-      compression?: number;
       scaleMode?: string;
-      performanceMode?: string;
       showDotCursor?: boolean;
     };
   }>(
@@ -93,10 +82,7 @@ export async function remoteDesktopRoutes(fastify: FastifyInstance) {
         password,
         color = '#f97316',
         viewOnly = false,
-        quality = 2,
-        compression = 1,
         scaleMode = 'fit',
-        performanceMode = 'fast',
         showDotCursor = true,
       } = req.body ?? {};
 
@@ -128,17 +114,11 @@ export async function remoteDesktopRoutes(fastify: FastifyInstance) {
       const id = uuidv4();
       const passwordCipher = password ? encryptSecret(password) : null;
 
-      const numQuality = Number(quality);
-      const numCompression = Number(compression);
-      const safeQuality = Math.min(9, Math.max(0, isNaN(numQuality) ? 2 : Math.round(numQuality)));
-      const safeCompression = Math.min(9, Math.max(0, isNaN(numCompression) ? 1 : Math.round(numCompression)));
-
       db.prepare(
         `INSERT INTO remote_desktop_connections (
           id, name, host, port, username, password_cipher,
-          color, view_only, quality, compression, scale_mode,
-          performance_mode, show_dot_cursor, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+          color, view_only, scale_mode, show_dot_cursor, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
       ).run(
         id,
         trimmedName,
@@ -148,10 +128,7 @@ export async function remoteDesktopRoutes(fastify: FastifyInstance) {
         passwordCipher,
         color,
         viewOnly ? 1 : 0,
-        safeQuality,
-        safeCompression,
         ['fit', 'original', 'stretch'].includes(scaleMode) ? scaleMode : 'fit',
-        PERFORMANCE_MODES.includes(performanceMode) ? performanceMode : 'fast',
         showDotCursor ? 1 : 0
       );
 
@@ -207,10 +184,7 @@ export async function remoteDesktopRoutes(fastify: FastifyInstance) {
       clearPassword?: boolean;
       color?: string;
       viewOnly?: boolean;
-      quality?: number;
-      compression?: number;
       scaleMode?: string;
-      performanceMode?: string;
       showDotCursor?: boolean;
     };
   }>(
@@ -270,26 +244,16 @@ export async function remoteDesktopRoutes(fastify: FastifyInstance) {
       const username = body.username !== undefined ? body.username.trim() : existing.username;
       const color = body.color !== undefined ? body.color : existing.color;
       const viewOnly = body.viewOnly !== undefined ? (body.viewOnly ? 1 : 0) : existing.view_only;
-      const quality = body.quality !== undefined
-        ? Math.min(9, Math.max(0, isNaN(Number(body.quality)) ? 2 : Math.round(Number(body.quality))))
-        : existing.quality;
-      const compression = body.compression !== undefined
-        ? Math.min(9, Math.max(0, isNaN(Number(body.compression)) ? 1 : Math.round(Number(body.compression))))
-        : existing.compression;
       const scaleMode = body.scaleMode !== undefined && ['fit', 'original', 'stretch'].includes(body.scaleMode)
         ? body.scaleMode
         : existing.scale_mode;
-      const performanceMode = body.performanceMode !== undefined && PERFORMANCE_MODES.includes(body.performanceMode)
-        ? body.performanceMode
-        : existing.performance_mode;
       const showDotCursor = body.showDotCursor !== undefined ? (body.showDotCursor ? 1 : 0) : existing.show_dot_cursor;
 
       db.prepare(
         `UPDATE remote_desktop_connections SET
           name = ?, host = ?, port = ?, username = ?,
           password_cipher = ?, color = ?, view_only = ?,
-          quality = ?, compression = ?, scale_mode = ?,
-          performance_mode = ?, show_dot_cursor = ?, updated_at = CURRENT_TIMESTAMP
+          scale_mode = ?, show_dot_cursor = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?`
       ).run(
         name,
@@ -299,10 +263,7 @@ export async function remoteDesktopRoutes(fastify: FastifyInstance) {
         passwordCipher,
         color,
         viewOnly,
-        quality,
-        compression,
         scaleMode,
-        performanceMode,
         showDotCursor,
         id
       );

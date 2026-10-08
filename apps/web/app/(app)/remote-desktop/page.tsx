@@ -10,19 +10,16 @@ import {
   getRemoteDesktopToken,
   testRemoteDesktopConnection,
   type RemoteDesktopConnection,
-  type RemoteDesktopPerformanceMode,
   type RemoteDesktopTestResult,
 } from "@/lib/api";
 import type RFB from "@novnc/novnc";
 
-type PerformanceMode = RemoteDesktopPerformanceMode;
-// Speed first: low JPEG quality and stronger zlib send fewer bytes per update. The viewport
-// cap only reduces pixels on hosts that accept remote resizing (see hostIgnoresResize).
-const PERFORMANCE_PRESETS = {
-  fast: { quality: 1, compression: 6, width: 1280, height: 800 },
-  balanced: { quality: 5, compression: 4, width: 1920, height: 1080 },
-  quality: { quality: 8, compression: 2, width: undefined, height: undefined },
-};
+// One low-latency profile: low JPEG quality keeps updates small, compression level 2 keeps host
+// encode time per frame low, and Fit Screen asks resizable hosts for at most 1280 × 800.
+const STREAM = { quality: 1, compression: 2, maxWidth: 1280, maxHeight: 800 };
+
+// Loaded on page mount so connecting does not wait for the viewer bundle.
+const loadRFB = () => import("@novnc/novnc").then((m) => m.default);
 
 // Unexpected drops retry with backoff; noVNC reports server-side closes as clean, so any
 // disconnect the user did not ask for counts.
@@ -58,10 +55,7 @@ interface ConnectionFormState {
   clearPassword?: boolean;
   color: string;
   viewOnly: boolean;
-  quality: number;
-  compression: number;
   scaleMode: "fit" | "original" | "stretch";
-  performanceMode: PerformanceMode;
   showDotCursor: boolean;
 }
 
@@ -73,10 +67,7 @@ const DEFAULT_FORM: ConnectionFormState = {
   password: "",
   color: "#f97316",
   viewOnly: false,
-  quality: 2,
-  compression: 1,
   scaleMode: "fit",
-  performanceMode: "fast",
   showDotCursor: true,
 };
 
@@ -105,8 +96,8 @@ export default function RemoteDesktopPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [scaleMode, setScaleMode] = useState<"fit" | "original">("fit");
   const [isViewOnly, setIsViewOnly] = useState(false);
-  const [performanceMode, setPerformanceMode] = useState<PerformanceMode>("fast");
   const [hostIgnoresResize, setHostIgnoresResize] = useState(false);
+  const [headerHeight, setHeaderHeight] = useState(77);
   const [clipboardText, setClipboardText] = useState("");
   const [clipboardModalOpen, setClipboardModalOpen] = useState(false);
   const [shortcutsMenuOpen, setShortcutsMenuOpen] = useState(false);
@@ -121,7 +112,6 @@ export default function RemoteDesktopPage() {
   const rfbRef = useRef<RFB | null>(null);
   const connectionAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const performanceModeRef = useRef<PerformanceMode>("fast");
   // Credentials typed into the prompt, reused by reconnects so a blip does not ask again.
   const manualCredentialsRef = useRef<{ id: string; username?: string; password: string } | null>(null);
   const vncContainerRef = useRef<HTMLDivElement | null>(null);
@@ -149,10 +139,7 @@ export default function RemoteDesktopPage() {
           clearPassword: form.clearPassword,
           color: form.color,
           viewOnly: form.viewOnly,
-          quality: form.quality,
-          compression: form.compression,
           scaleMode: form.scaleMode,
-          performanceMode: form.performanceMode,
           showDotCursor: form.showDotCursor,
         });
         if (!res.ok) throw new Error(res.error.message);
@@ -166,10 +153,7 @@ export default function RemoteDesktopPage() {
           password: form.password || undefined,
           color: form.color,
           viewOnly: form.viewOnly,
-          quality: form.quality,
-          compression: form.compression,
           scaleMode: form.scaleMode,
-          performanceMode: form.performanceMode,
           showDotCursor: form.showDotCursor,
         });
         if (!res.ok) throw new Error(res.error.message);
@@ -239,10 +223,7 @@ export default function RemoteDesktopPage() {
       clearPassword: false,
       color: c.color || "#f97316",
       viewOnly: c.viewOnly,
-      quality: c.quality,
-      compression: c.compression,
       scaleMode: c.scaleMode,
-      performanceMode: c.performanceMode ?? "fast",
       showDotCursor: c.showDotCursor,
     });
     setFormError(null);
@@ -262,10 +243,7 @@ export default function RemoteDesktopPage() {
         username: c.username,
         color: c.color,
         viewOnly: c.viewOnly,
-        quality: c.quality,
-        compression: c.compression,
         scaleMode: c.scaleMode,
-        performanceMode: c.performanceMode,
         showDotCursor: c.showDotCursor,
       });
       await queryClient.invalidateQueries({ queryKey: ["remote-desktop-connections"] });
@@ -361,7 +339,6 @@ export default function RemoteDesktopPage() {
     const attempt = ++connectionAttemptRef.current;
     const isCurrent = () => connectionAttemptRef.current === attempt;
     clearReconnectTimer();
-    const startMode: PerformanceMode = conn.performanceMode ?? "fast";
     if (rfbRef.current) {
       try {
         rfbRef.current.disconnect();
@@ -370,8 +347,6 @@ export default function RemoteDesktopPage() {
     }
 
     setActiveConnection(conn);
-    setPerformanceMode(startMode);
-    performanceModeRef.current = startMode;
     if (retry === 0) setHostIgnoresResize(false);
     setPromptPasswordOpen(false);
     setDesktopName("");
@@ -385,7 +360,7 @@ export default function RemoteDesktopPage() {
       setStatusMessage(`Connection lost. Reconnecting (${next}/${RECONNECT_DELAYS_MS.length})...`);
       reconnectTimerRef.current = setTimeout(() => {
         if (!isCurrent()) return;
-        connectToConnection({ ...conn, ...current, performanceMode: performanceModeRef.current }, next);
+        connectToConnection({ ...conn, ...current }, next);
       }, RECONNECT_DELAYS_MS[failedRetries]);
       return true;
     };
@@ -393,7 +368,7 @@ export default function RemoteDesktopPage() {
     setScaleMode(conn.scaleMode === "original" ? "original" : "fit");
 
     try {
-      const tokenRes = await getRemoteDesktopToken(conn.id);
+      const [tokenRes, RFBClass] = await Promise.all([getRemoteDesktopToken(conn.id), loadRFB()]);
       if (!isCurrent()) return;
       if (!tokenRes.ok) {
         throw new Error(tokenRes.error.message || "Could not retrieve connection token");
@@ -401,7 +376,6 @@ export default function RemoteDesktopPage() {
 
       const { token, connection: fullConn } = tokenRes.data;
       // Keep decrypted credentials scoped to this attempt, out of page state.
-      setActiveConnection({ ...conn, quality: fullConn.quality, compression: fullConn.compression });
       const manual = manualCredentialsRef.current?.id === conn.id ? manualCredentialsRef.current : null;
       const savedPassword = manual?.password || fullConn.password || undefined;
       const savedUsername = manual?.username || fullConn.username || undefined;
@@ -417,8 +391,6 @@ export default function RemoteDesktopPage() {
       }
 
       if (retry === 0) setStatusMessage(`Connecting to ${conn.host}:${conn.port}...`);
-
-      const RFBClass = (await import("@novnc/novnc")).default;
 
       // Wait for the session container to mount and apply the viewport limits.
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -441,9 +413,8 @@ export default function RemoteDesktopPage() {
       rfbRef.current = rfb;
       rfb.viewOnly = conn.viewOnly;
       rfb.scaleViewport = conn.scaleMode !== "original";
-      const startSettings = startMode === "custom" ? fullConn : PERFORMANCE_PRESETS[startMode];
-      rfb.qualityLevel = startSettings.quality;
-      rfb.compressionLevel = startSettings.compression;
+      rfb.qualityLevel = STREAM.quality;
+      rfb.compressionLevel = STREAM.compression;
       rfb.showDotCursor = conn.showDotCursor;
       // This is a request; hosts without ExtendedDesktopSize keep their native resolution.
       rfb.resizeSession = conn.scaleMode !== "original";
@@ -581,23 +552,6 @@ export default function RemoteDesktopPage() {
     if (!next) checkHostResize(rfbRef.current);
   };
 
-  const changePerformanceMode = (mode: PerformanceMode) => {
-    setPerformanceMode(mode);
-    performanceModeRef.current = mode;
-    if (activeConnection && activeConnection.performanceMode !== mode) {
-      setActiveConnection({ ...activeConnection, performanceMode: mode });
-      // Remember the choice so the next session starts in the same mode.
-      updateRemoteDesktopConnection(activeConnection.id, { performanceMode: mode })
-        .then(() => queryClient.invalidateQueries({ queryKey: ["remote-desktop-connections"] }))
-        .catch(() => {});
-    }
-    if (!rfbRef.current) return;
-    const settings = mode === "custom" ? activeConnection : PERFORMANCE_PRESETS[mode];
-    if (!settings) return;
-    rfbRef.current.compressionLevel = settings.compression;
-    rfbRef.current.qualityLevel = settings.quality;
-  };
-
   const sendKey = (keysym: number, code?: string) => {
     const rfb = rfbRef.current;
     if (!rfb) return;
@@ -631,6 +585,21 @@ export default function RemoteDesktopPage() {
   };
 
   useEffect(() => {
+    loadRFB().catch(() => {});
+  }, []);
+
+  // The session panel sits below the fixed app header, like the sidebar does.
+  useEffect(() => {
+    const header = document.querySelector("header");
+    if (!header) return;
+    const update = () => setHeaderHeight(header.getBoundingClientRect().height);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(Boolean(document.fullscreenElement));
     };
@@ -650,10 +619,7 @@ export default function RemoteDesktopPage() {
     };
   }, []);
 
-  const viewportCap =
-    scaleMode === "fit" && !isViewOnly && !hostIgnoresResize && performanceMode !== "custom"
-      ? PERFORMANCE_PRESETS[performanceMode]
-      : undefined;
+  const capViewport = scaleMode === "fit" && !isViewOnly && !hostIgnoresResize;
 
   const handlePasteClipboard = () => {
     if (!rfbRef.current || !clipboardText) return;
@@ -730,13 +696,17 @@ export default function RemoteDesktopPage() {
       {activeConnection && (
         <div
           ref={fullscreenContainerRef}
+          // On large screens the session uses all the space beside the sidebar instead of the
+          // page column, so the remote desktop is not squeezed to the column width.
           className={`flex flex-col rounded-2xl border overflow-hidden transition-all ${
-            isFullscreen ? "fixed inset-0 z-50 rounded-none border-0" : ""
+            isFullscreen
+              ? "fixed inset-0 z-50 h-screen rounded-none border-0"
+              : "h-[calc(100vh-8rem)] lg:fixed lg:bottom-4 lg:left-60 lg:right-4 lg:z-10 lg:h-auto"
           }`}
           style={{
             borderColor: "var(--border-subtle)",
             background: "var(--bg-elevated)",
-            height: isFullscreen ? "100vh" : "calc(100vh - 8rem)",
+            top: isFullscreen ? undefined : headerHeight + 16,
           }}
         >
           <div
@@ -971,55 +941,6 @@ export default function RemoteDesktopPage() {
                 </svg>
               </button>
 
-              {/* Performance Mode Switcher */}
-              <div
-                className="flex items-center rounded-lg border p-0.5 text-xs"
-                style={{ borderColor: "var(--border-subtle)", background: "rgba(255,255,255,0.03)" }}
-              >
-                <button
-                  onClick={() => changePerformanceMode("fast")}
-                  className={`rounded px-2 py-0.5 font-medium transition-all ${
-                    performanceMode === "fast"
-                      ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold"
-                      : "text-neutral-400 hover:text-neutral-200"
-                  }`}
-                  title="Prioritize speed: lowest image quality, strong compression, desktop up to 1280 × 800 on hosts that support resizing"
-                >
-                  ⚡ Fast
-                </button>
-                <button
-                  onClick={() => changePerformanceMode("balanced")}
-                  className={`rounded px-2 py-0.5 font-medium transition-all ${
-                    performanceMode === "balanced"
-                      ? "bg-blue-500/20 text-blue-300 border border-blue-500/40 font-semibold"
-                      : "text-neutral-400 hover:text-neutral-200"
-                  }`}
-                  title="Medium image quality, desktop up to 1920 × 1080 on hosts that support resizing"
-                >
-                  🚀 Balanced
-                </button>
-                <button
-                  onClick={() => changePerformanceMode("quality")}
-                  className={`rounded px-2 py-0.5 font-medium transition-all ${
-                    performanceMode === "quality"
-                      ? "bg-purple-500/20 text-purple-300 border border-purple-500/40 font-semibold"
-                      : "text-neutral-400 hover:text-neutral-200"
-                  }`}
-                  title="High Quality (Maximum color precision and detail)"
-                >
-                  💎 Crisp
-                </button>
-                <button
-                  onClick={() => changePerformanceMode("custom")}
-                  className={`rounded px-2 py-0.5 font-medium transition-all ${
-                    performanceMode === "custom" ? "bg-neutral-700 text-white" : "text-neutral-400 hover:text-neutral-200"
-                  }`}
-                  title="Use this connection's saved quality and compression settings"
-                >
-                  Custom
-                </button>
-              </div>
-
               <button
                 onClick={toggleScaleMode}
                 className={`rounded-lg border px-2 py-1 text-xs transition-all ${
@@ -1157,8 +1078,8 @@ export default function RemoteDesktopPage() {
               className="w-full h-full flex items-center justify-center overflow-hidden cursor-default outline-none"
               style={{
                 background: "#111",
-                maxWidth: viewportCap?.width,
-                maxHeight: viewportCap?.height,
+                maxWidth: capViewport ? STREAM.maxWidth : undefined,
+                maxHeight: capViewport ? STREAM.maxHeight : undefined,
               }}
             />
 
@@ -1504,13 +1425,6 @@ export default function RemoteDesktopPage() {
                         )}
 
                         <span
-                          className="rounded-md border px-2 py-0.5 text-neutral-400"
-                          style={{ borderColor: "var(--border-subtle)" }}
-                        >
-                          Q{conn.quality} · C{conn.compression}
-                        </span>
-
-                        <span
                           className="rounded-md border px-2 py-0.5 text-neutral-400 capitalize"
                           style={{ borderColor: "var(--border-subtle)" }}
                         >
@@ -1774,7 +1688,7 @@ export default function RemoteDesktopPage() {
                   onClick={() => setShowAdvanced((v) => !v)}
                   className="flex w-full items-center justify-between text-xs font-semibold py-1 text-neutral-300 hover:text-white"
                 >
-                  <span>Advanced Performance & Display</span>
+                  <span>Advanced Display</span>
                   <svg
                     className={`h-4 w-4 transition-transform ${showAdvanced ? "rotate-180" : ""}`}
                     fill="none"
@@ -1788,64 +1702,6 @@ export default function RemoteDesktopPage() {
 
                 {showAdvanced && (
                   <div className="mt-3 space-y-3 pt-2">
-                    <div>
-                      <label className="block font-medium mb-1 text-neutral-400">Starting Performance Mode</label>
-                      <select
-                        value={form.performanceMode}
-                        onChange={(e) => setForm({ ...form, performanceMode: e.target.value as PerformanceMode })}
-                        className="w-full rounded-xl border px-3 py-1.5 outline-none text-xs"
-                        style={{
-                          borderColor: "var(--input-border)",
-                          background: "var(--input-bg)",
-                          color: "var(--text-primary)",
-                        }}
-                      >
-                        <option value="fast">⚡ Fast (Recommended)</option>
-                        <option value="balanced">🚀 Balanced</option>
-                        <option value="quality">💎 Crisp</option>
-                        <option value="custom">Custom (quality and compression below)</option>
-                      </select>
-                      <p className="text-[10px] text-neutral-500 mt-0.5">
-                        Changing the mode during a session also updates this setting.
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="block font-medium text-neutral-400">
-                            Custom Quality: <span className="font-mono text-white">{form.quality}</span>
-                          </label>
-                          <span className="text-[10px] text-neutral-500">{form.quality <= 4 ? "⚡ Fast" : form.quality <= 7 ? "🚀 Balanced" : "💎 High"}</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="9"
-                          value={form.quality}
-                          onChange={(e) => setForm({ ...form, quality: Number(e.target.value) })}
-                          className="w-full accent-orange-500"
-                        />
-                        <p className="text-[10px] text-neutral-500 mt-0.5">Lower values reduce image detail and bandwidth</p>
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="block font-medium text-neutral-400">
-                            Custom Compression: <span className="font-mono text-white">{form.compression}</span>
-                          </label>
-                          <span className="text-[10px] font-medium text-amber-400">{form.compression === 0 ? "Off" : form.compression <= 2 ? "Light" : "High"}</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="9"
-                          value={form.compression}
-                          onChange={(e) => setForm({ ...form, compression: Number(e.target.value) })}
-                          className="w-full accent-orange-500"
-                        />
-                        <p className="text-[10px] text-neutral-500 mt-0.5">Higher levels send less data but use more host CPU</p>
-                      </div>
-                    </div>
-
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="block font-medium mb-1 text-neutral-400">Scale Mode</label>
